@@ -11,13 +11,13 @@ using System.Globalization;
 
 namespace Oxide.Plugins
 {
-    [Info("DronePatrol", "RFC1920", "1.0.0")]
+    [Info("DronePatrol", "RFC1920", "1.0.1")]
     [Description("Oxide Plugin")]
     class DronePatrol : RustPlugin
     {
         #region vars
         [PluginReference]
-        private Plugin Economics, RoadFinder;
+        private Plugin Economics, RoadFinder, Friends, Clans, Chute;
 
         public GameObject obj;
         public Dictionary<string, Road> roads = new Dictionary<string, Road>();
@@ -26,6 +26,7 @@ namespace Oxide.Plugins
         public SortedDictionary<string, Vector3> monSize = new SortedDictionary<string, Vector3>();
         public List<BasePlayer> guis = new List<BasePlayer>();
 
+        public static Timer checkTimer;
         public static string droneprefab = "assets/prefabs/deployable/drone/drone.deployed.prefab";
         ConfigData configData;
 
@@ -35,6 +36,14 @@ namespace Oxide.Plugins
         const string DRONEGUI = "npc.hud";
 
         public static Dictionary<string, BaseEntity> drones = new Dictionary<string, BaseEntity>();
+
+        public class Road
+        {
+            public List<Vector3> points = new List<Vector3>();
+            public float width;
+            public float offset;
+            public int topo;
+        }
         #endregion
 
         #region Message
@@ -48,9 +57,9 @@ namespace Oxide.Plugins
             LoadConfigVariables();
             Instance = this;
 
-            AddCovalenceCommand("d", "CmdSpawnDrone");
+            AddCovalenceCommand("drone", "CmdSpawnDrone");
             AddCovalenceCommand("md", "CmdSpawnMonumentDrone");
-            AddCovalenceCommand("pd", "CmdSpawnPatrolDrone");
+            AddCovalenceCommand("pd", "CmdSpawnRoadDrone");
             permission.RegisterPermission(permDriver, this);
             permission.RegisterPermission(permAdmin, this);
 
@@ -63,38 +72,57 @@ namespace Oxide.Plugins
 
             drones = new Dictionary<string, BaseEntity>();
 
-            object x = RoadFinder.CallHook("GetRoads");
-            var json = JsonConvert.SerializeObject(x);
-            roads = JsonConvert.DeserializeObject<Dictionary<string, Road>>(json);
-            SpawnRingDrone();
-            SpawnRoadDrone();
+            object x = RoadFinder?.CallHook("GetRoads");
+            if (x != null)
+            {
+                var json = JsonConvert.SerializeObject(x);
+                roads = JsonConvert.DeserializeObject<Dictionary<string, Road>>(json);
+                SpawnRingDrone();
+                SpawnRoadDrone();
+            }
 
             FindMonuments();
             SpawnMonumentDrone();
+            CheckDrones();
         }
 
-        void SetDroneInCS(string drone)
+        private void CheckDrones()
         {
-            if (!configData.Options.setDronesInAllCS) return;
-            var stations = UnityEngine.Object.FindObjectsOfType<ComputerStation>();
-            foreach(var station in stations)
+            Dictionary<string, BaseEntity> tmpDrones = new Dictionary<string, BaseEntity>(drones);
+            foreach(var d in tmpDrones)
             {
-                if (station.controlBookmarks.ContainsKey(drone))
+                var drone = d.Value;
+                if(drone.IsDestroyed | drone.IsBroken())
                 {
-                    station.controlBookmarks.Remove(drone);
-                }
-                if (drones.ContainsKey(drone))
-                {
-                    station.controlBookmarks.Add(drone, drones[drone].net.ID);
+                    drone.Kill();
+                    drones.Remove(d.Key);
+                    switch(d.Key)
+                    {
+                        case "MonumentDrone":
+                            SpawnMonumentDrone();
+                            break;
+                        case "RingDrone":
+                            SpawnRingDrone();
+                            break;
+                        case "RoadDrone":
+                            SpawnRoadDrone();
+                            break;
+                    }
                 }
             }
+            checkTimer = timer.Once(30, () => CheckDrones());
         }
 
+        void Loaded()
+        {
+        }
         protected override void LoadDefaultMessages()
         {
             lang.RegisterMessages(new Dictionary<string, string>
             {
+                ["notauthorized"] = "You don't have permission to use this command.",
                 ["drone"] = "Drone",
+                ["helptext1"] = "To spawn a drone, type /d NAMEOFDRONE",
                 ["heading"] = "Drone headed to {0}"
             }, this);
         }
@@ -109,6 +137,26 @@ namespace Oxide.Plugins
             foreach (var player in BasePlayer.activePlayerList)
             {
                 CuiHelper.DestroyUi(player, DRONEGUI);
+            }
+        }
+
+        void OnEntitySpawned(Drone drone)
+        {
+            if (!configData.Options.setPlayerDroneInCS) return;
+
+            var stations = UnityEngine.Object.FindObjectsOfType<ComputerStation>();
+            var rc = drone.GetComponent<RemoteControlEntity>();
+            if (rc == null) return;
+
+            foreach(var station in stations)
+            {
+                if (station.OwnerID != drone.OwnerID && !IsFriend(station.OwnerID, drone.OwnerID)) continue;
+
+                if (station.controlBookmarks.ContainsKey(rc.rcIdentifier))
+                {
+                    station.controlBookmarks.Remove(rc.rcIdentifier);
+                }
+                station.controlBookmarks.Add(rc.rcIdentifier, drone.net.ID);
             }
         }
 
@@ -132,109 +180,39 @@ namespace Oxide.Plugins
         #endregion
 
         #region Main
-        private void DoLog(string message, bool ismovement = false)
-        {
-            if (ismovement && !configData.Options.debugMovement) return;
-            if (configData.Options.debug) Interface.Oxide.LogInfo(message);
-        }
-
-        void SpawnRoadDrone()
-        {
-            if (!configData.Options.spawnRoadDrone) return;
-            if(!roads.ContainsKey(configData.Options.startRoad))
-            {
-                DoLog("No such road on this map :(");
-                return;
-            }
-
-            var road = configData.Options.startRoad;
-            Vector3 target = roads[road].points[0];
-            target.y = TerrainMeta.HeightMap.GetHeight(target) + configData.Options.minHeight;
-
-            var drone = GameManager.server.CreateEntity(droneprefab, target, new Quaternion());
-            DoLog($"Drone object created...");
-            var obj = drone.gameObject.AddComponent<DroneNav>();
-            DoLog($"DroneNav object created...");
-            drone.Spawn();
-
-            DoLog($"Moving to start of {road}...");
-            obj.SetType(DroneType.Road);
-            obj.SetRoad(road);
-
-            drones.Add("RoadDrone", drone);
-            SetDroneInCS("RoadDrone");
-        }
-        void SpawnRingDrone()
-        {
-            if (!configData.Options.spawnRingRoadDrone) return;
-            if(!roads.ContainsKey(configData.Options.startRingRoad))
-            {
-                DoLog("No such road on this map :(");
-                return;
-            }
-
-            var road = configData.Options.startRingRoad;
-            Vector3 target = roads[road].points[0];
-            target.y = TerrainMeta.HeightMap.GetHeight(target) + configData.Options.minHeight;
-
-            var drone = GameManager.server.CreateEntity(droneprefab, target, new Quaternion());
-            DoLog($"Drone object created...");
-            var obj = drone.gameObject.AddComponent<DroneNav>();
-            DoLog($"DroneNav object created...");
-            drone.Spawn();
-
-            DoLog($"Moving to start of {road}...");
-            obj.SetType(DroneType.Ring);
-            obj.SetRoad(road, true);
-
-            drones.Add("RingDrone", drone);
-            SetDroneInCS("RingDrone");
-        }
-        void SpawnMonumentDrone()
-        {
-            if (!configData.Options.spawnMonumentPatrolDrone) return;
-
-            Vector3 target = Vector3.zero;
-            target.y = TerrainMeta.HeightMap.GetHeight(target) + configData.Options.minHeight;
-
-            var drone = GameManager.server.CreateEntity(droneprefab, target, new Quaternion());
-            DoLog($"Drone object created...");
-            var obj = drone.gameObject.AddComponent<DroneNav>();
-            DoLog($"DroneNav object created...");
-            obj.SetType(DroneType.MonAll);
-            drone.Spawn();
-
-            drones.Add("MonumentDrone", drone);
-            SetDroneInCS("MonumentDrone");
-        }
-
         void CmdSpawnMonumentDrone(IPlayer iplayer, string command, string[] args)
         {
+            if (!iplayer.HasPermission(permAdmin))
+            {
+                Message(iplayer, "notauthorized");
+                return;
+            }
             var player = iplayer.Object as BasePlayer;
 
             Vector3 target = player.transform.position;
             target.y = TerrainMeta.HeightMap.GetHeight(player.transform.position) + configData.Options.minHeight;
 
             var drone = GameManager.server.CreateEntity(droneprefab, target, player.transform.rotation);
-            DoLog($"Drone object created...");
             var obj = drone.gameObject.AddComponent<DroneNav>();
-            DoLog($"DroneNav object created...");
             obj.ownerid = player.userID;
             obj.type = DroneType.MonAll;
             drone.Spawn();
             Message(iplayer, "Spawned Monument drone");
         }
 
-        void CmdSpawnPatrolDrone(IPlayer iplayer, string command, string[] args)
+        void CmdSpawnRoadDrone(IPlayer iplayer, string command, string[] args)
         {
+            if (!iplayer.HasPermission(permAdmin))
+            {
+                Message(iplayer, "notauthorized");
+                return;
+            }
             var player = iplayer.Object as BasePlayer;
             Vector3 target = player.transform.position;
             target.y = TerrainMeta.HeightMap.GetHeight(player.transform.position) + configData.Options.minHeight;
 
             var drone = GameManager.server.CreateEntity(droneprefab, target, player.transform.rotation);
-            DoLog($"Drone object created...");
             var obj = drone.gameObject.AddComponent<DroneNav>();
-            DoLog($"DroneNav object created...");
             obj.ownerid = player.userID;
             drone.Spawn();
             string road = "Road 5"; // TESTING
@@ -242,15 +220,75 @@ namespace Oxide.Plugins
             obj.SetRoad(road);
         }
 
-        //private void OnPlayerInput(BasePlayer player, InputState input)
-        //{
-        //    if (player == null || input == null) return;
-        //    if(input.current.buttons > 1)
-        //        Puts($"OnPlayerInput: {input.current.buttons}");
-        //}
+        private void OnPlayerInput(BasePlayer player, InputState input)
+        {
+            if (player == null || input == null) return;
+            //if(input.current.buttons > 1)
+            //    Puts($"OnPlayerInput: {input.current.buttons}");
+
+            if(input.current.buttons == 2112 && Chute != null)
+            {
+                // We are the Priests of the Temples of Syrinx
+                if (guis.Contains(player))
+                {
+                    Puts("Getting station");
+                    var station = player.GetMounted() as ComputerStation;
+                    Puts("Getting controlled item");
+                    var drone = station.currentlyControllingEnt.Get(true).GetComponent<Drone>();
+                    if(drone != null)
+                    {
+                        Puts("Getting controlled item location");
+                        var newPos = new Vector3(drone.transform.position.x, drone.transform.position.y, drone.transform.position.z);
+                        newPos.y += 10f;
+                        Puts("Stopping control");
+                        station.StopControl(player);
+                        station.DismountPlayer(player);
+
+                        Puts($"Teleporting {player.displayName}  to {newPos.ToString()}");
+                        guis.Remove(player);
+                        Teleport(player, newPos);
+                        Puts($"Adding chute");
+                        Chute?.CallHook("ExternalAddPlayerChute", player, null);
+                        var dnav = drone.GetComponentInParent<DroneNav>() ?? null;
+                        if (dnav != null)
+                        {
+                            UnityEngine.Object.Destroy(dnav);
+                        }
+                        drone.Kill();
+                    }
+                }
+            }
+        }
+
+        public void Teleport(BasePlayer player, Vector3 position)
+        {
+            if(player.net?.connection != null) player.SetPlayerFlag(BasePlayer.PlayerFlags.ReceivingSnapshot, true);
+
+            player.SetParent(null, true, true);
+            player.EnsureDismounted();
+            player.Teleport(position);
+            player.UpdateNetworkGroup();
+            player.SendNetworkUpdateImmediate(false);
+
+            if(player.net?.connection != null) player.ClientRPCPlayer(null, player, "StartLoading");
+        }
 
         void CmdSpawnDrone(IPlayer iplayer, string command, string[] args)
         {
+            if (!iplayer.HasPermission(permDriver))
+            {
+                Message(iplayer, "notauthorized");
+                return;
+            }
+
+            if(args.Length == 0)
+            {
+                Message(iplayer, "helptext1");
+                return;
+            }
+            string droneName = Lang("drone");
+            if (args[0] != null) droneName = args[0];
+
             var player = iplayer.Object as BasePlayer;
             string prefab = "assets/prefabs/deployable/drone/drone.deployed.prefab";
 
@@ -258,16 +296,18 @@ namespace Oxide.Plugins
             target.y = TerrainMeta.HeightMap.GetHeight(player.transform.position) + configData.Options.minHeight;
 
             var drone = GameManager.server.CreateEntity(prefab, target, player.transform.rotation);
-            DoLog($"Drone object created...");
+            drone.OwnerID = player.userID;
+            //var dbce = drone as BaseCombatEntity;
+            //dbce.startHealth = 100;
+            //var dasd = drone as Drone;
+            //if (configData.Options.playerDronesImmortal)
+            //{
+            //    dasd.diesAtZeroHealth = false;
+            //}
+            var rc = drone.GetComponent<RemoteControlEntity>();
+            if(rc != null) rc.UpdateIdentifier(droneName);
             drone.Spawn();
-        }
-
-        public class Road
-        {
-            public List<Vector3> points = new List<Vector3>();
-            public float width;
-            public float offset;
-            public int topo;
+            drone.SendNetworkUpdateImmediate();
         }
 
         object OnBookmarkAdd(ComputerStation computerStation, BasePlayer player, string bookmarkName)
@@ -305,34 +345,6 @@ namespace Oxide.Plugins
             return null;
         }
 
-        // Our Hooks
-        private object OnDroneNavDirection(string newdirection)
-        {
-            List<BasePlayer> newgui = new List<BasePlayer>(guis);
-            foreach (var pl in newgui)
-            {
-                DroneGUI(pl, newdirection);
-            }
-            newgui.Clear();
-            return null;
-        }
-
-        private void OnDroneNavDestroyed(DroneNav drone)
-        {
-            switch(drone.type)
-            {
-                case DroneType.MonAll:
-                    SpawnMonumentDrone();
-                    break;
-                case DroneType.Ring:
-                    SpawnRingDrone();
-                    break;
-                case DroneType.Road:
-                    SpawnRoadDrone();
-                    break;
-            }
-        }
-
         void DroneGUI(BasePlayer player, string target = null)
         {
             guis.Remove(player);
@@ -359,6 +371,19 @@ namespace Oxide.Plugins
         }
         #endregion
 
+        #region our_hooks
+        private object OnDroneNavDirection(string newdirection)
+        {
+            List<BasePlayer> newgui = new List<BasePlayer>(guis);
+            foreach (var pl in newgui)
+            {
+                DroneGUI(pl, newdirection);
+            }
+            newgui.Clear();
+            return null;
+        }
+        #endregion
+
         #region config
         protected override void LoadDefaultConfig()
         {
@@ -374,7 +399,12 @@ namespace Oxide.Plugins
                     spawnRoadDrone = false,
                     minHeight = 40,
                     debug = false,
-                    setDronesInAllCS = true
+                    setDronesInAllCS = true,
+                    setPlayerDroneInCS = true,
+                    playerDronesImmortal = false,
+                    useClans = false,
+                    useFriends = false,
+                    useTeams = false
                 },
                 Version = Version
             };
@@ -412,6 +442,11 @@ namespace Oxide.Plugins
             public string startRingRoad;
             public string startRoad;
             public bool setDronesInAllCS;
+            public bool setPlayerDroneInCS;
+            public bool playerDronesImmortal;
+            public bool useFriends;
+            public bool useClans;
+            public bool useTeams;
         }
         #endregion
 
@@ -498,10 +533,9 @@ namespace Oxide.Plugins
 
             void Update()
             {
-                if (drone.IsDead())
+                if (drone.IsDead() || rc.IsDead())
                 {
-                    Interface.Oxide.CallHook("OnDroneNavDestroyed", this);
-                    Destroy(this);
+                    return;
                 }
                 //if (grounded) return;
                 switch (type)
@@ -885,6 +919,91 @@ namespace Oxide.Plugins
         }
         #endregion
 
+        #region helpers
+        void SpawnRoadDrone()
+        {
+            if (!configData.Options.spawnRoadDrone) return;
+            drones.Remove("RoadDrone");
+            if(!roads.ContainsKey(configData.Options.startRoad))
+            {
+                DoLog("No such road on this map :(");
+                return;
+            }
+
+            var road = configData.Options.startRoad;
+            Vector3 target = roads[road].points[0];
+            target.y = TerrainMeta.HeightMap.GetHeight(target) + configData.Options.minHeight;
+
+            var drone = GameManager.server.CreateEntity(droneprefab, target, new Quaternion());
+            var obj = drone.gameObject.AddComponent<DroneNav>();
+            drone.Spawn();
+
+            DoLog($"Moving to start of {road}...");
+            obj.SetType(DroneType.Road);
+            obj.SetRoad(road);
+
+            drones.Add("RoadDrone", drone);
+            SetDroneInCS("RoadDrone");
+        }
+        void SpawnRingDrone()
+        {
+            if (!configData.Options.spawnRingRoadDrone) return;
+            drones.Remove("RingDrone");
+            if(!roads.ContainsKey(configData.Options.startRingRoad))
+            {
+                DoLog("No such road on this map :(");
+                return;
+            }
+
+            var road = configData.Options.startRingRoad;
+            Vector3 target = roads[road].points[0];
+            target.y = TerrainMeta.HeightMap.GetHeight(target) + configData.Options.minHeight;
+
+            var drone = GameManager.server.CreateEntity(droneprefab, target, new Quaternion());
+            var obj = drone.gameObject.AddComponent<DroneNav>();
+            drone.Spawn();
+
+            DoLog($"Moving to start of {road}...");
+            obj.SetType(DroneType.Ring);
+            obj.SetRoad(road, true);
+
+            drones.Add("RingDrone", drone);
+            SetDroneInCS("RingDrone");
+        }
+        void SpawnMonumentDrone()
+        {
+            if (!configData.Options.spawnMonumentPatrolDrone) return;
+            drones.Remove("MonumentDrone");
+
+            Vector3 target = Vector3.zero;
+            target.y = TerrainMeta.HeightMap.GetHeight(target) + configData.Options.minHeight;
+
+            var drone = GameManager.server.CreateEntity(droneprefab, target, new Quaternion());
+            var obj = drone.gameObject.AddComponent<DroneNav>();
+            obj.SetType(DroneType.MonAll);
+            drone.Spawn();
+
+            drones.Add("MonumentDrone", drone);
+            SetDroneInCS("MonumentDrone");
+        }
+
+        void SetDroneInCS(string drone)
+        {
+            if (!configData.Options.setDronesInAllCS) return;
+            var stations = UnityEngine.Object.FindObjectsOfType<ComputerStation>();
+            foreach(var station in stations)
+            {
+                if (station.controlBookmarks.ContainsKey(drone))
+                {
+                    station.controlBookmarks.Remove(drone);
+                }
+                if (drones.ContainsKey(drone))
+                {
+                    station.controlBookmarks.Add(drone, drones[drone].net.ID);
+                }
+            }
+        }
+
         void FindMonuments()
         {
             Vector3 extents = Vector3.zero;
@@ -942,5 +1061,55 @@ namespace Oxide.Plugins
 
             return random;
         }
+
+        private void DoLog(string message, bool ismovement = false)
+        {
+            if (ismovement && !configData.Options.debugMovement) return;
+            if (configData.Options.debug) Interface.Oxide.LogInfo(message);
+        }
+
+        private bool IsFriend(ulong playerid, ulong ownerid)
+        {
+            if (configData.Options.useFriends && Friends != null)
+            {
+                var fr = Friends?.CallHook("AreFriends", playerid, ownerid);
+                if (fr != null && (bool)fr)
+                {
+                    return true;
+                }
+            }
+            if (configData.Options.useClans && Clans != null)
+            {
+                string playerclan = (string)Clans?.CallHook("GetClanOf", playerid);
+                string ownerclan = (string)Clans?.CallHook("GetClanOf", ownerid);
+                if (playerclan != null && ownerclan != null)
+                {
+                    if (playerclan == ownerclan)
+                    {
+                        return true;
+                    }
+                }
+            }
+            if (configData.Options.useTeams)
+            {
+                BasePlayer player = BasePlayer.FindByID(playerid);
+                if (player != null)
+                {
+                    if (player.currentTeam != 0)
+                    {
+                        RelationshipManager.PlayerTeam playerTeam = RelationshipManager.Instance.FindTeam(player.currentTeam);
+                        if (playerTeam != null)
+                        {
+                            if (playerTeam.members.Contains(ownerid))
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+        #endregion
     }
 }
