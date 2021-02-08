@@ -11,7 +11,7 @@ using System.Globalization;
 
 namespace Oxide.Plugins
 {
-    [Info("DronePatrol", "RFC1920", "1.0.2")]
+    [Info("DronePatrol", "RFC1920", "1.0.3")]
     [Description("Oxide Plugin")]
     class DronePatrol : RustPlugin
     {
@@ -560,11 +560,18 @@ namespace Oxide.Plugins
                 currentRoadName = road;
                 target = currentRoad.points[0];
                 totalPoints = currentRoad.points.Count - 1;
+
+                int i = 0;
+                foreach(var pt in currentRoad.points)
+                {
+                    Instance.DoLog($"{road} point {i} == {pt.ToString()}");
+                    i++;
+                }
             }
 
             void Update()
             {
-                if (drone.IsDead() || rc.IsDead())
+                if (drone.IsDead() || rc.IsDead() || !drone.isSpawned)
                 {
                     return;
                 }
@@ -574,7 +581,10 @@ namespace Oxide.Plugins
                 {
                     case DroneType.Ring:
                         drone.diesAtZeroHealth = false;
-                        if (rc.rcIdentifier != "RingDrone") rc.UpdateIdentifier("RingDrone", true);
+                        if (rc.rcIdentifier == "NONE")
+                        {
+                            rc.UpdateIdentifier(Instance.configData.Drones["ring"].name, true);
+                        }
                         if (currentRoad == null) return;
                         if (target != Vector3.zero)
                         {
@@ -586,7 +596,10 @@ namespace Oxide.Plugins
                         break;
                     case DroneType.Road:
                         drone.diesAtZeroHealth = false;
-                        if(rc.rcIdentifier != "RoadDrone") rc.UpdateIdentifier("RoadDrone", true);
+                        if (rc.rcIdentifier == "NONE")
+                        {
+                            rc.UpdateIdentifier(Instance.configData.Drones["road"].name, true);
+                        }
                         if (currentRoad == null) return;
                         //if (target != Vector3.zero)
                         //{
@@ -599,7 +612,10 @@ namespace Oxide.Plugins
                         break;
                     case DroneType.MonAll:
                         drone.diesAtZeroHealth = false;
-                        if(rc.rcIdentifier != "MonumentDrone") rc.UpdateIdentifier("MonumentDrone", true);
+                        if (rc.rcIdentifier == "NONE")
+                        {
+                            rc.UpdateIdentifier(Instance.configData.Drones["monument"].name, true);
+                        }
                         if (currentMonument == null)
                         {
                             if (grounded)
@@ -631,39 +647,36 @@ namespace Oxide.Plugins
 
                 current = drone.transform.position;
                 target = new Vector3(currentRoad.points[whichPoint].x, GetHeight(currentRoad.points[whichPoint]), currentRoad.points[whichPoint].z);
-                //target = currentRoad.points[whichPoint];
+
                 var direction = (target - current).normalized;
                 var lookrotation = Quaternion.LookRotation(direction);
 
                 if (Vector3.Distance(current, target) < 2)
                 {
-                    Instance.DoLog($"{rc.rcIdentifier} ARRIVED at point ({whichPoint}) {target.ToString()}", true);
-                    if (ending)
+                    Instance.DoLog($"Arrived at target point {whichPoint.ToString()}");
+                    whichPoint++;
+                    if (whichPoint > totalPoints) whichPoint = 0;
+
+                    if(isring)
                     {
-                        //enabled = false;
-                        whichPoint = 0;
+                    }
+                    else if (ending)
+                    {
                         target = currentRoad.points[0];
                         ending = false;
-                        return;
-                    }
-                    if (isring)
-                    {
-                        Instance.DoLog($"{rc.rcIdentifier} incrementing to point {whichPoint.ToString()}", true);
-                        whichPoint++;
-                        if (whichPoint == totalPoints) whichPoint = 0;
-                        target = currentRoad.points[whichPoint];
-                        //drone.transform.rotation = lookrotation;
+                        target.y = GetHeight(target);
                     }
                     else
                     {
                         whichPoint = totalPoints;
-                        target = currentRoad.points[totalPoints];
+                        target = currentRoad.points[whichPoint];
                         ending = true;
-                        drone.transform.rotation = lookrotation;
+                        target.y = GetHeight(target);
                     }
-                    return;
+                    Instance.DoLog($"Changed target point to {whichPoint.ToString()}");
                 }
 
+                drone.transform.rotation = lookrotation;
                 DoMoveDrone(direction);
             }
 
@@ -696,7 +709,7 @@ namespace Oxide.Plugins
                 }
 
                 //drone.transform.rotation = Quaternion.LookRotation(target);
-                Instance.DoLog($"{rc.rcIdentifier} trying to move from {current.ToString()} to {target.ToString()} via {direction.ToString()}", true);
+                //Instance.DoLog($"{rc.rcIdentifier} trying to move from {current.ToString()} to {target.ToString()} via {direction.ToString()}", true);
                 int x = 0;
                 int z = 0;
 
@@ -970,6 +983,7 @@ namespace Oxide.Plugins
 
             var drone = GameManager.server.CreateEntity(droneprefab, target, new Quaternion());
             var obj = drone.gameObject.AddComponent<DroneNav>();
+//            drone.transform.rotation = new Quaternion();
             drone.Spawn();
 
             DoLog($"Moving to start of {road}...");
