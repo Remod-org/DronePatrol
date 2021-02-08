@@ -512,6 +512,7 @@ namespace Oxide.Plugins
             public Vector3 current;
             public Quaternion rotation;
             public static Vector3 target = Vector3.zero;
+            public static GameObject slop = new GameObject();
 
             public int whichPoint;
             public int totalPoints;
@@ -519,8 +520,7 @@ namespace Oxide.Plugins
             public static bool grounded = true;
             public static bool hover = true;
             public static bool started = false;
-            public static bool ending = false;
-            public static bool isring = false;
+            public static bool ending;
 
             void Awake()
             {
@@ -542,14 +542,13 @@ namespace Oxide.Plugins
                 this.type = type;
             }
 
-            public void SetRoad(string road, bool isring = false)
+            public void SetRoad(string road, bool isringroad = false)
             {
                 if (type == DroneType.None)
                 {
-                    if(isring)
+                    if(isringroad)
                     {
                         SetType(DroneType.Ring);
-                        isring = true;
                     }
                     else
                     {
@@ -561,12 +560,12 @@ namespace Oxide.Plugins
                 target = currentRoad.points[0];
                 totalPoints = currentRoad.points.Count - 1;
 
-                int i = 0;
-                foreach(var pt in currentRoad.points)
-                {
-                    Instance.DoLog($"{road} point {i} == {pt.ToString()}");
-                    i++;
-                }
+                //int i = 0;
+                //foreach(var pt in currentRoad.points)
+                //{
+                //    Instance.DoLog($"{road} point {i} == {pt.ToString()}");
+                //    i++;
+                //}
             }
 
             void Update()
@@ -586,12 +585,7 @@ namespace Oxide.Plugins
                             rc.UpdateIdentifier(Instance.configData.Drones["ring"].name, true);
                         }
                         if (currentRoad == null) return;
-                        if (target != Vector3.zero)
-                        {
-                            grounded = false;
-                            MoveToRoadPoint();
-                            target = currentRoad.points[0];
-                        }
+                        MoveToRoadPoint();
                         grounded = false;
                         break;
                     case DroneType.Road:
@@ -601,12 +595,6 @@ namespace Oxide.Plugins
                             rc.UpdateIdentifier(Instance.configData.Drones["road"].name, true);
                         }
                         if (currentRoad == null) return;
-                        //if (target != Vector3.zero)
-                        //{
-                        //    grounded = false;
-                        //    MoveToRoadPoint(target);
-                        //    target = currentRoad.points[0];
-                        //}
                         MoveToRoadPoint();
                         grounded = false;
                         break;
@@ -657,8 +645,12 @@ namespace Oxide.Plugins
                     whichPoint++;
                     if (whichPoint > totalPoints) whichPoint = 0;
 
-                    if(isring)
+                    if (type == DroneType.Ring)
                     {
+                        target = currentRoad.points[whichPoint];
+                        target.y = GetHeight(target);
+                        //direction = (target - current).normalized;
+                        //lookrotation = Quaternion.LookRotation(direction);
                     }
                     else if (ending)
                     {
@@ -676,6 +668,22 @@ namespace Oxide.Plugins
                     Instance.DoLog($"Changed target point to {whichPoint.ToString()}");
                 }
 
+                if(type == DroneType.Ring)
+                {
+                    var newd = target - current;
+                    direction = newd + newd.normalized * 10000;
+                    // 1. Set position 100m in front of forward direction
+                    // 2. 
+                    //                    Destroy(slop);
+                    //                    slop = new GameObject();
+                    //                    slop.transform.position = target + drone.transform.forward * 100;
+
+
+                    //Interface.Oxide.LogDebug($"Distance {dist.ToString()}, New target {tgt.ToString()}, direction: {direction.ToString()}");
+
+                    //var dir = (currentRoad.points[totalPoints / 2] - current).normalized;
+                    lookrotation = Quaternion.LookRotation(direction);
+                }
                 drone.transform.rotation = lookrotation;
                 DoMoveDrone(direction);
             }
