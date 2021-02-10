@@ -59,7 +59,7 @@ namespace Oxide.Plugins
 
             AddCovalenceCommand("drone", "CmdSpawnDrone");
             AddCovalenceCommand("md", "CmdSpawnMonumentDrone");
-            AddCovalenceCommand("pd", "CmdSpawnRoadDrone");
+            AddCovalenceCommand("rd", "CmdSpawnRoadDrone");
             permission.RegisterPermission(permDriver, this);
             permission.RegisterPermission(permAdmin, this);
 
@@ -738,6 +738,7 @@ namespace Oxide.Plugins
                 InputMessage message = new InputMessage() { buttons = 0 };
 
                 bool toolow = TooLow(current);
+                bool above = DangerAbove(current);
                 bool frontcrash = DangerFront(current);
                 float terrainHeight = TerrainMeta.HeightMap.GetHeight(current);
 
@@ -749,9 +750,12 @@ namespace Oxide.Plugins
                 }
                 if (current.y < target.y || (current.y - terrainHeight < 1.5f) || toolow || frontcrash)
                 {
-                    // Move UP
-                    Instance.DoLog($"{rc.rcIdentifier} Moving UP {current.y}", true);
-                    message.buttons = 128;
+                    if (!above)
+                    {
+                        // Move UP
+                        Instance.DoLog($"{rc.rcIdentifier} Moving UP {current.y}", true);
+                        message.buttons = 128;
+                    }
                 }
                 else if (current.y > (terrainHeight + Instance.configData.Options.minHeight * 2) + 5 && !frontcrash)
                 {
@@ -796,15 +800,17 @@ namespace Oxide.Plugins
 
             float GetHeight(Vector3 tgt)
             {
-                float targetHeight = tgt.y;
+                float terrainHeight = TerrainMeta.WaterMap.GetHeight(tgt);
+                float waterHeight = TerrainMeta.WaterMap.GetHeight(tgt);
+                float targetHeight = TerrainMeta.HeightMap.GetHeight(tgt) + Instance.configData.Options.minHeight;
+
                 RaycastHit hitinfo;
                 if(Physics.Raycast(current, Vector3.down, out hitinfo, 100f, LayerMask.GetMask("Water")))
                 {
-                    targetHeight = TerrainMeta.WaterMap.GetHeight(tgt) + Instance.configData.Options.minHeight;
-                }
-                else
-                {
-                    targetHeight = TerrainMeta.HeightMap.GetHeight(tgt) + Instance.configData.Options.minHeight;
+                    if (TerrainMeta.WaterMap.GetHeight(hitinfo.point) < terrainHeight)
+                    {
+                        targetHeight = TerrainMeta.WaterMap.GetHeight(tgt) + Instance.configData.Options.minHeight;
+                    }
                 }
 
                 return targetHeight;
@@ -882,10 +888,25 @@ namespace Oxide.Plugins
                 return false;
             }
 
+            bool DangerAbove(Vector3 tgt)
+            {
+                // In case we get stuck under a building component, esp at OilRigs
+                RaycastHit hitinfo;
+                if (Physics.Raycast(current, Vector3.up, out hitinfo, 2f, buildingMask))
+                {
+                    if (hitinfo.GetEntity() != drone)
+                    {
+                        Instance.DoLog($"{rc.rcIdentifier} CRASH ABOVE!", true);
+                        return true;
+                    }
+                }
+                return false;
+            }
+
             bool DangerFront(Vector3 tgt)
             {
                 RaycastHit hitinfo;
-                if (Physics.Raycast(current, Vector3.forward, out hitinfo, 20f, buildingMask))
+                if (Physics.Raycast(current, Vector3.forward, out hitinfo, 7f))//, buildingMask))
                 {
                     if (hitinfo.GetEntity() != drone)
                     {
