@@ -11,7 +11,7 @@ using System.Globalization;
 
 namespace Oxide.Plugins
 {
-    [Info("DronePatrol", "RFC1920", "1.0.5")]
+    [Info("DronePatrol", "RFC1920", "1.0.6")]
     [Description("Oxide Plugin")]
     class DronePatrol : RustPlugin
     {
@@ -269,7 +269,11 @@ namespace Oxide.Plugins
                         {
                             UnityEngine.Object.Destroy(dnav);
                         }
-                        if (drone.OwnerID == player.userID) drone.Kill();
+                        if (drone.OwnerID == player.userID)
+                        {
+                            DoLog($"Killing player drone.");
+                            drone.Kill();
+                        }
                     }
                 }
             }
@@ -653,10 +657,7 @@ namespace Oxide.Plugins
                         }
                         if (string.IsNullOrEmpty(currentMonument))
                         {
-                            if (grounded)
-                            {
-                                GetMonument();
-                            }
+                            GetMonument();
                         }
                         grounded = false;
                         MoveToMonument();
@@ -795,21 +796,46 @@ namespace Oxide.Plugins
 
             float GetHeight(Vector3 tgt)
             {
-                float terrainHeight = TerrainMeta.HeightMap.GetHeight(tgt);
-                float targetHeight = terrainHeight + Instance.configData.Options.minHeight;
+                float targetHeight = tgt.y;
+                RaycastHit hitinfo;
+                if(Physics.Raycast(current, Vector3.down, out hitinfo, 100f, LayerMask.GetMask("Water")))
+                {
+                    targetHeight = TerrainMeta.WaterMap.GetHeight(tgt) + Instance.configData.Options.minHeight;
+                }
+                else
+                {
+                    targetHeight = TerrainMeta.HeightMap.GetHeight(tgt) + Instance.configData.Options.minHeight;
+                }
 
                 return targetHeight;
             }
 
+            void GetRoad()
+            {
+                // Pick a random road if road is null
+                var cnt = Instance.roads.Count;
+
+                System.Random rand = new System.Random();
+                List<string> roadlist = new List<string>(Instance.roads.Keys);
+                var croad = roadlist[rand.Next(cnt)];
+                currentRoad = Instance.roads[croad];
+
+                Instance.DoLog($"Set {rc.rcIdentifier} road to {currentRoad}", true);
+                target = currentRoad.points[0];
+                target.y = Instance.configData.Options.minHeight;
+            }
             void GetMonument()
             {
+                // Pick a random monument if currentMonument is null
                 var cnt = Instance.monNames.Count;
 
                 System.Random rand = new System.Random();
                 currentMonument = Instance.monNames[rand.Next(cnt)];
+
                 Instance.DoLog($"Set {rc.rcIdentifier} monument to {currentMonument}", true);
                 target = Instance.monPos[currentMonument];
                 target.y = Instance.configData.Options.minHeight;
+
                 Interface.Oxide.CallHook("OnDroneNavDirection", currentMonument);
             }
 
@@ -873,7 +899,7 @@ namespace Oxide.Plugins
             bool TooLow(Vector3 tgt)
             {
                 RaycastHit hitinfo;
-                int groundLayer = LayerMask.GetMask("Construction", "Terrain", "World");
+                int groundLayer = LayerMask.GetMask("Construction", "Terrain", "World", "Water");
                 if(Physics.Raycast(current, Vector3.down, out hitinfo, 10f, groundLayer) || Physics.Raycast(current, Vector3.up, out hitinfo, 10f, groundLayer))
                 {
                     if (hitinfo.GetEntity() != drone)
@@ -996,10 +1022,25 @@ namespace Oxide.Plugins
         #endregion
 
         #region helpers
+        public string GetRoad()
+        {
+            // Pick a random road if road is null
+            var cnt = Instance.roads.Count;
+
+            System.Random rand = new System.Random();
+            List<string> roadlist = new List<string>(Instance.roads.Keys);
+            return roadlist[rand.Next(cnt)];
+        }
+
         public void SpawnRoadDrone()
         {
             if (!configData.Drones["road"].spawn) return;
+            if(configData.Drones["road"].start == null)
+            {
+                configData.Drones["road"].start = GetRoad();
+            }
             drones.Remove(configData.Drones["road"].name);
+
             if(!roads.ContainsKey(configData.Drones["road"].start))
             {
                 DoLog("No such road on this map :(");
@@ -1026,6 +1067,8 @@ namespace Oxide.Plugins
         {
             if (!configData.Drones["ring"].spawn) return;
             drones.Remove(configData.Drones["ring"].name);
+            if (configData.Drones["ring"].start == null) configData.Drones["ring"].start = "Road 0";
+
             if(!roads.ContainsKey(configData.Drones["ring"].start))
             {
                 DoLog("No such road on this map :(");
