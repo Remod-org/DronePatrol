@@ -8,16 +8,17 @@ using System.Text.RegularExpressions;
 using System.Linq;
 using Oxide.Game.Rust.Cui;
 using System.Globalization;
+using System;
 
 namespace Oxide.Plugins
 {
-    [Info("DronePatrol", "RFC1920", "1.0.7")]
+    [Info("DronePatrol", "RFC1920", "1.0.8")]
     [Description("Oxide Plugin")]
     class DronePatrol : RustPlugin
     {
         #region vars
         [PluginReference]
-        private Plugin Economics, RoadFinder, Friends, Clans, Chute;
+        private Plugin Economics, RoadFinder, Friends, Clans, Chute, GridAPI;
 
         public GameObject obj;
         public Dictionary<string, Road> roads = new Dictionary<string, Road>();
@@ -60,15 +61,9 @@ namespace Oxide.Plugins
             AddCovalenceCommand("drone", "CmdSpawnDrone");
             AddCovalenceCommand("md", "CmdSpawnMonumentDrone");
             AddCovalenceCommand("rd", "CmdSpawnRoadDrone");
+            AddCovalenceCommand("ringd", "CmdSpawnRingDrone");
             permission.RegisterPermission(permDriver, this);
             permission.RegisterPermission(permAdmin, this);
-
-            var dnav = UnityEngine.Object.FindObjectsOfType<DroneNav>();
-            foreach (var d in dnav)
-            {
-                d.drone.Kill();
-                UnityEngine.Object.Destroy(d);
-            }
 
             drones = new Dictionary<string, BaseEntity>();
 
@@ -91,6 +86,9 @@ namespace Oxide.Plugins
             lang.RegisterMessages(new Dictionary<string, string>
             {
                 ["notauthorized"] = "You don't have permission to use this command.",
+                ["mdstatus"] = "{0} @ {1}\n  Current target: {2} {3} (size {4}m)",
+                ["rdstatus"] = "{0} @ {1}\n  Current target: {2} {3}",
+                ["ringstatus"] = "{0} @ {1}",
                 ["drone"] = "Drone",
                 ["helptext"] = "To spawn a drone, type /drone NAMEOFDRONE",
                 ["heading"] = "Drone headed to {0}"
@@ -138,15 +136,6 @@ namespace Oxide.Plugins
             }
             checkTimer = timer.Once(5, () => CheckDrones());
         }
-
-//        void Loaded()
-//        {
-//            var bp = BasePlayer.FindObjectsOfType<BasePlayer>();
-//            foreach (var d in bp)
-//            {
-//                d.Kill();
-//            }
-//        }
 
         void Unload()
         {
@@ -208,6 +197,51 @@ namespace Oxide.Plugins
                 Message(iplayer, "notauthorized");
                 return;
             }
+            if (args.Length > 0)
+            {
+                if(args[0] == "status")
+                {
+                    var nav = drones[configData.Drones["monument"].name].GetComponent<DroneNav>();
+                    if(nav != null)
+                    {
+                        string curr = null;
+                        string tgt = null;
+                        if (GridAPI != null)
+                        {
+                            var gc = (string[])GridAPI.CallHook("GetGrid", nav.current);
+                            curr = nav.current.ToString() + "(" + string.Join("", gc) + ")";
+                            var gt = (string[])GridAPI.CallHook("GetGrid", nav.target);
+                            tgt = nav.target.ToString() + "(" + string.Join("", gt) + ")";
+                        }
+                        else
+                        {
+                            curr = nav.current.ToString();
+                            tgt = nav.target.ToString();
+                        }
+                        Message(iplayer, "mdstatus", nav.rc.rcIdentifier, curr, nav.currentMonument, tgt, nav.currentMonSize);
+                    }
+                    return;
+                }
+                else if(args[0] == "list")
+                {
+                    foreach(var key in monPos.Keys)
+                    {
+                        Message(iplayer, key);
+                    }
+                    return;
+                }
+                var nextMon = string.Join(" ", args);
+                if(monPos.ContainsKey(nextMon))
+                {
+                    var nav = drones[configData.Drones["monument"].name].GetComponent<DroneNav>();
+                    if(nav != null)
+                    {
+                        nav.currentMonument = nextMon;
+                        Interface.Oxide.CallHook("OnDroneNavDirection", nextMon);
+                    }
+                }
+                return;
+            }
             var player = iplayer.Object as BasePlayer;
 
             Vector3 target = player.transform.position;
@@ -228,6 +262,50 @@ namespace Oxide.Plugins
                 Message(iplayer, "notauthorized");
                 return;
             }
+            if (args.Length > 0)
+            {
+                if (args[0] == "status")
+                {
+                    var nav = drones[configData.Drones["road"].name].GetComponent<DroneNav>();
+                    if (nav != null)
+                    {
+                        string curr = null;
+                        string tgt = null;
+                        if (GridAPI != null)
+                        {
+                            var gc = (string[])GridAPI.CallHook("GetGrid", nav.current);
+                            curr = nav.current.ToString() + "(" + string.Join("", gc) + ")";
+                            var gt = (string[])GridAPI.CallHook("GetGrid", nav.target);
+                            tgt = nav.target.ToString() + "(" + string.Join("", gt) + ")";
+                        }
+                        else
+                        {
+                            curr = nav.current.ToString();
+                            tgt = nav.target.ToString();
+                        }
+                        Message(iplayer, "rdstatus", nav.rc.rcIdentifier, curr, nav.currentRoadName, tgt);
+                    }
+                    return;
+                }
+                else if (args[0] == "list")
+                {
+                    foreach (var key in roads.Keys)
+                    {
+                        Message(iplayer, key);
+                    }
+                    return;
+                }
+                if(roads.ContainsKey(args[0]))
+                {
+                    var nav = drones["road"].GetComponent<DroneNav>();
+                    if(nav != null)
+                    {
+                        nav.currentRoad = roads[args[0]];
+                        Interface.Oxide.CallHook("OnDroneNavDirection", args[0]);
+                    }
+                }
+                return;
+            }
             var player = iplayer.Object as BasePlayer;
             Vector3 target = player.transform.position;
             target.y = TerrainMeta.HeightMap.GetHeight(player.transform.position) + configData.Options.minHeight;
@@ -236,10 +314,53 @@ namespace Oxide.Plugins
             var obj = drone.gameObject.AddComponent<DroneNav>();
             obj.ownerid = player.userID;
             drone.Spawn();
-            string road = "Road 5"; // TESTING
-            DoLog($"Moving to start of {road}...");
+            string road = configData.Drones["road"].start;
+            DoLog($"CmdSpawnRoadDrone: Moving to start of {road}...");
             obj.SetRoad(road);
         }
+
+        void CmdSpawnRingDrone(IPlayer iplayer, string command, string[] args)
+        {
+            if (!iplayer.HasPermission(permAdmin))
+            {
+                Message(iplayer, "notauthorized");
+                return;
+            }
+            if (args.Length > 0)
+            {
+                if (args[0] == "status")
+                {
+                    var nav = drones[configData.Drones["ring"].name].GetComponent<DroneNav>();
+                    if (nav != null)
+                    {
+                        string curr = null;
+                        if (GridAPI != null)
+                        {
+                            var gc = (string[])GridAPI.CallHook("GetGrid", nav.current);
+                            curr = nav.current.ToString() + "(" + string.Join("", gc) + ")";
+                        }
+                        else
+                        {
+                            curr = nav.current.ToString();
+                        }
+                        Message(iplayer, "ringstatus", nav.rc.rcIdentifier, curr);
+                    }
+                }
+                return;
+            }
+            var player = iplayer.Object as BasePlayer;
+            Vector3 target = player.transform.position;
+            target.y = TerrainMeta.HeightMap.GetHeight(player.transform.position) + configData.Options.minHeight;
+
+            var drone = GameManager.server.CreateEntity(droneprefab, target, player.transform.rotation);
+            var obj = drone.gameObject.AddComponent<DroneNav>();
+            obj.ownerid = player.userID;
+            drone.Spawn();
+            string road = configData.Drones["ring"].start;
+            DoLog($"CmdSpawnRingDrone: Moving to start of {road}...");
+            obj.SetRoad(road);
+        }
+
 
         private void OnPlayerInput(BasePlayer player, InputState input)
         {
@@ -315,7 +436,10 @@ namespace Oxide.Plugins
             var drone = GameManager.server.CreateEntity(droneprefab, target, player.transform.rotation);
             drone.OwnerID = player.userID;
             var rc = drone.GetComponent<RemoteControlEntity>();
-            if(rc != null) rc.UpdateIdentifier(droneName);
+            if (rc != null)
+            {
+                rc.UpdateIdentifier(droneName);
+            }
             drone.Spawn();
             drone.SendNetworkUpdateImmediate();
         }
@@ -524,10 +648,12 @@ namespace Oxide.Plugins
             public Road currentRoad;
             public string currentRoadName;
             public string currentMonument;
+            public float currentMonSize;
             public Vector3 current;
             public Quaternion rotation;
             public static Vector3 direction;
-            public static Vector3 target = Vector3.zero;
+            public Vector3 target = Vector3.zero;
+            public static Vector3 last = Vector3.zero;
             public static GameObject slop = new GameObject();
 
             public int whichPoint;
@@ -654,6 +780,7 @@ namespace Oxide.Plugins
                         if (string.IsNullOrEmpty(currentMonument))
                         {
                             currentMonument = Instance.configData.Drones["monument"].start;
+                            currentMonSize = Instance.monSize[Instance.configData.Drones["monument"].start].z;
                         }
                         if (string.IsNullOrEmpty(currentMonument))
                         {
@@ -718,8 +845,10 @@ namespace Oxide.Plugins
                 direction = (target - current).normalized;
                 var lookrotation = Quaternion.LookRotation(direction);
 
-                if (Vector3.Distance(current, target) < 2)
+                var monsize = Mathf.Max(25, currentMonSize);
+                if (Vector3.Distance(current, target) < monsize)
                 {
+                    Instance.DoLog($"Within {monsize.ToString()}m of {currentMonument.ToString()}.  Switching...", true);
                     GetMonument();
                     target = Instance.monPos[currentMonument];
                     target.y = GetHeight(target);
@@ -796,13 +925,14 @@ namespace Oxide.Plugins
 
                 //Instance.DoLog($"Moving from {current.ToString()} to {target.ToString()} via {direction.ToString()}");
                 rc.UserInput(input, player);
+
+                last = drone.transform.position;
             }
 
             float GetHeight(Vector3 tgt)
             {
-                float terrainHeight = TerrainMeta.WaterMap.GetHeight(tgt);
-                float waterHeight = TerrainMeta.WaterMap.GetHeight(tgt);
-                float targetHeight = TerrainMeta.HeightMap.GetHeight(tgt) + Instance.configData.Options.minHeight;
+                float terrainHeight = TerrainMeta.HeightMap.GetHeight(tgt);
+                float targetHeight = terrainHeight + Instance.configData.Options.minHeight;
 
                 RaycastHit hitinfo;
                 if(Physics.Raycast(current, Vector3.down, out hitinfo, 100f, LayerMask.GetMask("Water")))
@@ -834,11 +964,15 @@ namespace Oxide.Plugins
             {
                 // Pick a random monument if currentMonument is null
                 var cnt = Instance.monNames.Count;
+                List<string> monlist = new List<string>(Instance.monSize.Keys);
 
                 System.Random rand = new System.Random();
-                currentMonument = Instance.monNames[rand.Next(cnt)];
+                var index = rand.Next(cnt);
+                var cmon = monlist[index];
+                currentMonument = Instance.monNames[index];
+                currentMonSize = Instance.monSize[cmon].z;
 
-                Instance.DoLog($"Set {rc.rcIdentifier} monument to {currentMonument}", true);
+                Instance.DoLog($"Set {rc.rcIdentifier} monument to {currentMonument} {currentMonSize}", true);
                 target = Instance.monPos[currentMonument];
                 target.y = Instance.configData.Options.minHeight;
 
@@ -906,9 +1040,11 @@ namespace Oxide.Plugins
             bool DangerFront(Vector3 tgt)
             {
                 RaycastHit hitinfo;
-                if (Physics.Raycast(current, Vector3.forward, out hitinfo, 7f))//, buildingMask))
+                //if (Physics.Raycast(current, (current - tgt).normalized, out hitinfo, 10f, buildingMask))
+                //if (Physics.Raycast(current, drone.transform.forward, out hitinfo, 10f, buildingMask))
+                if (Physics.Raycast(current + drone.transform.forward, drone.transform.forward, out hitinfo, 4f, buildingMask))
                 {
-                    if (hitinfo.GetEntity() != drone)
+                    if (hitinfo.GetEntity() != drone && hitinfo.distance <= 4f)
                     {
                         Instance.DoLog($"{rc.rcIdentifier} FRONTAL CRASH!", true);
                         return true;
@@ -1076,7 +1212,7 @@ namespace Oxide.Plugins
             var obj = drone.gameObject.AddComponent<DroneNav>();
             drone.Spawn();
 
-            DoLog($"Moving to start of {road}...");
+            DoLog($"SpawnRoadDrone: Moving to start of {road}...");
             obj.SetType(DroneType.Road);
             obj.rc.UpdateIdentifier(configData.Drones["road"].name);
             obj.SetRoad(road);
@@ -1105,7 +1241,7 @@ namespace Oxide.Plugins
             obj.rc.UpdateIdentifier(configData.Drones["ring"].name);
             drone.Spawn();
 
-            DoLog($"Moving to start of {road}...");
+            DoLog($"SpawnRingDrone: Moving to start of {road}...");
             obj.SetType(DroneType.Ring);
             obj.SetRoad(road, true);
 
@@ -1122,7 +1258,7 @@ namespace Oxide.Plugins
 
             var drone = GameManager.server.CreateEntity(droneprefab, target, new Quaternion());
             var obj = drone.gameObject.AddComponent<DroneNav>();
-            obj.rc.UpdateIdentifier(configData.Drones["ring"].name);
+            obj.rc.UpdateIdentifier(configData.Drones["monument"].name);
             obj.SetType(DroneType.MonAll);
             drone.Spawn();
 
@@ -1208,7 +1344,7 @@ namespace Oxide.Plugins
         private void DoLog(string message, bool ismovement = false)
         {
             if (ismovement && !configData.Options.debugMovement) return;
-            if (configData.Options.debug) Interface.Oxide.LogInfo(message);
+            if (configData.Options.debugMovement | configData.Options.debug) Interface.Oxide.LogInfo(message);
         }
 
         private bool IsFriend(ulong playerid, ulong ownerid)
