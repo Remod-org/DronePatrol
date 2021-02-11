@@ -11,7 +11,7 @@ using System.Globalization;
 
 namespace Oxide.Plugins
 {
-    [Info("DronePatrol", "RFC1920", "1.0.6")]
+    [Info("DronePatrol", "RFC1920", "1.0.7")]
     [Description("Oxide Plugin")]
     class DronePatrol : RustPlugin
     {
@@ -92,7 +92,7 @@ namespace Oxide.Plugins
             {
                 ["notauthorized"] = "You don't have permission to use this command.",
                 ["drone"] = "Drone",
-                ["helptext1"] = "To spawn a drone, type /d NAMEOFDRONE",
+                ["helptext"] = "To spawn a drone, type /drone NAMEOFDRONE",
                 ["heading"] = "Drone headed to {0}"
             }, this);
         }
@@ -302,7 +302,7 @@ namespace Oxide.Plugins
 
             if(args.Length == 0)
             {
-                Message(iplayer, "helptext1");
+                Message(iplayer, "helptext");
                 return;
             }
             string droneName = Lang("drone");
