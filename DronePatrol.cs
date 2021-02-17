@@ -13,7 +13,7 @@ using System.Diagnostics;
 
 namespace Oxide.Plugins
 {
-    [Info("DronePatrol", "RFC1920", "1.0.9")]
+    [Info("DronePatrol", "RFC1920", "1.0.10")]
     [Description("Oxide Plugin")]
     class DronePatrol : RustPlugin
     {
@@ -120,6 +120,16 @@ namespace Oxide.Plugins
             // Do some cleanup.  You're welcome.
             BaseEntity.saveList.RemoveWhere(p => !p);
             BaseEntity.saveList.RemoveWhere(p => p == null);
+            foreach(var pl in BasePlayer.sleepingPlayerList)
+            {
+                foreach(var di in configData.Drones)
+                {
+                    if (pl.displayName.Contains(di.Value.name) || pl.displayName.Contains("NONE Pilot"))
+                    {
+                        pl.Kill();
+                    }
+                }
+            }
 
             Dictionary<string, BaseEntity> tmpDrones = new Dictionary<string, BaseEntity>(drones);
             foreach(var d in tmpDrones)
@@ -377,6 +387,11 @@ namespace Oxide.Plugins
                         }
                         Message(iplayer, "mdstatus", nav.rc.rcIdentifier, curr, nav.currentMonument, tgt, nav.currentMonSize);
                     }
+
+                    //for (int i = 0; i < 32; i++)
+                    //{
+                    //    Puts($"{i.ToString()}: {LayerMask.LayerToName(i)}");
+                    //}
                     return;
                 }
                 else if(args[0] == "list")
@@ -532,11 +547,10 @@ namespace Oxide.Plugins
                     var drone = station.currentlyControllingEnt.Get(true).GetComponent<Drone>();
                     if(drone != null)
                     {
-                        var newPos = new Vector3(drone.transform.position.x, drone.transform.position.y, drone.transform.position.z);
-                        newPos.y += 10f;
+                        var newPos = new Vector3(drone.transform.position.x, drone.transform.position.y + 10f, drone.transform.position.z);
                         station.StopControl(player);
-                        station.DismountPlayer(player);
-                        station.SendNetworkUpdate();
+                        station.DismountPlayer(player, true);
+                        station.SendNetworkUpdateImmediate();
 
                         pguis.Remove(player.userID);
                         Teleport(player, newPos);
@@ -776,7 +790,7 @@ namespace Oxide.Plugins
             public RemoteControlEntity rc;
             public BasePlayer player;
             public BasePlayer targetPlayer;
-            public int buildingMask = LayerMask.GetMask("Construction", "Prevent Building", "Deployed", "World", "Terrain", "Tree");
+            public int buildingMask = LayerMask.GetMask("Construction", "Prevent Building", "Deployed", "World", "Terrain", "Tree", "Invisible", "Default");
 
             public uint droneid;
             public ulong ownerid;
