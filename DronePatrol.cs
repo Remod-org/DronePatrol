@@ -1,3 +1,25 @@
+#region License (GPL v3)
+/*
+    Loot Protection - Prevent access to player containers
+    Copyright (c) 2020 RFC1920 <desolationoutpostpve@gmail.com>
+
+    This program is free software; you can redistribute it and/or
+    modify it under the terms of the GNU General Public License
+    as published by the Free Software Foundation; either version 2
+    of the License, or (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software
+    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+    Optionally you can also view the license at <http://www.gnu.org/licenses/>.
+*/
+#endregion
 using System.Collections.Generic;
 using UnityEngine;
 using Oxide.Core;
@@ -13,7 +35,7 @@ using System.Diagnostics;
 
 namespace Oxide.Plugins
 {
-    [Info("DronePatrol", "RFC1920", "1.0.10")]
+    [Info("DronePatrol", "RFC1920", "1.0.11")]
     [Description("Oxide Plugin")]
     class DronePatrol : RustPlugin
     {
@@ -38,6 +60,7 @@ namespace Oxide.Plugins
         const string DRONEGUI = "npc.hud";
 
         public static Dictionary<string, BaseEntity> drones = new Dictionary<string, BaseEntity>();
+        public static bool initdone = false;
 
         public class Road
         {
@@ -81,6 +104,7 @@ namespace Oxide.Plugins
             FindMonuments();
             SpawnMonumentDrone();
             CheckDrones(true);
+            initdone = true;
         }
 
         protected override void LoadDefaultMessages()
@@ -118,15 +142,30 @@ namespace Oxide.Plugins
             }
 
             // Do some cleanup.  You're welcome.
+            // Missing network group
             BaseEntity.saveList.RemoveWhere(p => !p);
             BaseEntity.saveList.RemoveWhere(p => p == null);
+            // Sleeping automaton controllers
             foreach(var pl in BasePlayer.sleepingPlayerList)
             {
                 foreach(var di in configData.Drones)
                 {
                     if (pl.displayName.Contains(di.Value.name) || pl.displayName.Contains("NONE Pilot"))
                     {
-                        pl.Kill();
+                        if(!pl.IsDestroyed) pl.Kill();
+                    }
+                }
+            }
+            // NONE Drones
+            var ndrones = UnityEngine.Object.FindObjectsOfType<Drone>();
+            foreach(var drone in ndrones)
+            {
+                RemoteControlEntity rc = drone.GetComponent<RemoteControlEntity>();
+                if(rc != null)
+                {
+                    if (rc.rcIdentifier == "NONE")
+                    {
+                        drone.Kill();
                     }
                 }
             }
@@ -172,25 +211,6 @@ namespace Oxide.Plugins
             }
         }
 
-        void OnEntitySpawned(Drone drone)
-        {
-            if (!configData.Options.setPlayerDroneInCS) return;
-
-            var stations = UnityEngine.Object.FindObjectsOfType<ComputerStation>();
-            var rc = drone.GetComponent<RemoteControlEntity>();
-            if (rc == null) return;
-
-            foreach(var station in stations)
-            {
-                if (station.OwnerID != drone.OwnerID && !IsFriend(station.OwnerID, drone.OwnerID)) continue;
-
-                if (station.controlBookmarks.ContainsKey(rc.rcIdentifier))
-                {
-                    station.controlBookmarks.Remove(rc.rcIdentifier);
-                }
-                station.controlBookmarks.Add(rc.rcIdentifier, drone.net.ID);
-            }
-        }
         private object CanPickupEntity(BasePlayer player, BaseCombatEntity ent)
         {
             if (player == null || ent == null) return null;
@@ -210,13 +230,38 @@ namespace Oxide.Plugins
             return null;
         }
 
+        void OnEntitySpawned(Drone drone)
+        {
+            if (!initdone) return;
+            if (!configData.Options.setPlayerDroneInCS) return;
+            if (drone == null) return;
+
+            var stations = UnityEngine.Object.FindObjectsOfType<ComputerStation>();
+            if (stations.Count() == 0) return;
+            var rc = drone.GetComponent<RemoteControlEntity>();
+            if (rc == null) return;
+
+            foreach(var station in stations)
+            {
+                if (station.OwnerID != drone.OwnerID && !IsFriend(station.OwnerID, drone.OwnerID)) continue;
+
+                if (station.controlBookmarks.ContainsKey(rc.rcIdentifier))
+                {
+                    station.controlBookmarks.Remove(rc.rcIdentifier);
+                }
+                station.controlBookmarks.Add(rc.rcIdentifier, drone.net.ID);
+            }
+        }
         void OnEntitySpawned(ComputerStation station)
         {
+            if (!initdone) return;
             if (!configData.Options.setServerDroneInAllCS) return;
-            List<string> dronelist = new List<string>() { "MonumentDrone", "RingDrone", "RoadDrone" };
+            if (station == null) return;
 
+            List<string> dronelist = new List<string>() { "MonumentDrone", "RingDrone", "RoadDrone" };
             foreach(var drone in dronelist)
             {
+                if (drone == null) return;
                 if (station.controlBookmarks.ContainsKey(drone))
                 {
                     station.controlBookmarks.Remove(drone);
