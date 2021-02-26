@@ -35,8 +35,8 @@ using System.Diagnostics;
 
 namespace Oxide.Plugins
 {
-    [Info("DronePatrol", "RFC1920", "1.0.11")]
-    [Description("Oxide Plugin")]
+    [Info("DronePatrol", "RFC1920", "1.0.12")]
+    [Description("Create server drones that fly and roam, and allow users to spawn a drone of their own.")]
     class DronePatrol : RustPlugin
     {
         #region vars
@@ -134,8 +134,8 @@ namespace Oxide.Plugins
                     var rc = d.GetComponent<RemoteControlEntity>();
                     if (rc != null && sdrones.Contains(rc.rcIdentifier))
                     {
-                        d.Kill();
-                        rc.Kill();
+                        if (!d.IsDestroyed) d.Kill();
+                        if (!rc.IsDestroyed) rc.Kill();
                         RemoveDroneFromCS(rc.rcIdentifier);
                     }
                 }
@@ -165,7 +165,7 @@ namespace Oxide.Plugins
                 {
                     if (rc.rcIdentifier == "NONE")
                     {
-                        drone.Kill();
+                        if (!drone.IsDestroyed) drone.Kill();
                     }
                 }
             }
@@ -432,11 +432,6 @@ namespace Oxide.Plugins
                         }
                         Message(iplayer, "mdstatus", nav.rc.rcIdentifier, curr, nav.currentMonument, tgt, nav.currentMonSize);
                     }
-
-                    //for (int i = 0; i < 32; i++)
-                    //{
-                    //    Puts($"{i.ToString()}: {LayerMask.LayerToName(i)}");
-                    //}
                     return;
                 }
                 else if(args[0] == "list")
@@ -454,7 +449,7 @@ namespace Oxide.Plugins
                     if(nav != null)
                     {
                         nav.currentMonument = nextMon;
-                        OnDroneNavChange(iplayer.Object as BasePlayer, nav, nextMon);
+                        OnDroneNavChange(nav, nextMon);
                     }
                 }
                 return;
@@ -518,7 +513,7 @@ namespace Oxide.Plugins
                     if(nav != null)
                     {
                         nav.currentRoad = roads[args[0]];
-                        OnDroneNavChange(iplayer.Object as BasePlayer, nav, Instance.configData.Drones["road"].name);
+                        OnDroneNavChange(nav, Instance.configData.Drones["road"].name);
                     }
                 }
                 return;
@@ -635,18 +630,16 @@ namespace Oxide.Plugins
             var drone = ent as Drone;
             if(drone != null)
             {
-                DoLog($"Player {player.UserIDString} controlling drone {remoteControllable.GetEnt().ShortPrefabName}");
+                DoLog($"Player {player.UserIDString} now controlling drone {remoteControllable.GetEnt().ShortPrefabName}");
                 var obj = drone.GetComponent<DroneNav>();
                 if (obj != null)
                 {
                     if (obj.currentRoad != null)
                     {
-                        //DroneGUI(player, obj.currentRoadName);
                         DroneGUI(player, obj, Lang("heading", obj.currentRoadName));
                     }
                     else if (obj.currentMonument != null)
                     {
-                        //DroneGUI(player, obj.currentMonument);
                         DroneGUI(player, obj, Lang("heading", obj.currentMonument, obj.currentMonument));
                     }
                 }
@@ -702,14 +695,15 @@ namespace Oxide.Plugins
         #endregion
 
         #region our_hooks
-        private object OnDroneNavChange(BasePlayer player, DroneNav drone, string newdirection)
+        private object OnDroneNavChange(DroneNav drone, string newdirection)
         {
             var tmpgui = new Dictionary<ulong, DroneNav>(pguis);
             foreach (KeyValuePair<ulong, DroneNav> pgui in tmpgui)
             {
-                if (pgui.Key == player.userID && pgui.Value == drone)
+                if (pgui.Value == drone)
                 {
-                    DroneGUI(player, drone, Lang("heading", null, newdirection), newdirection);
+                    var pl = BasePlayer.FindByID(pgui.Key);
+                    DroneGUI(pl, drone, Lang("heading", null, newdirection), newdirection);
                 }
             }
             return null;
@@ -726,10 +720,6 @@ namespace Oxide.Plugins
             }
             return null;
         }
-        //private bool DroneChangeDirection(string dname, Vector3 target, string targetname)
-        //{
-        //    return true;
-        //}
         #endregion
 
         #region config
@@ -836,6 +826,8 @@ namespace Oxide.Plugins
             public BasePlayer player;
             public BasePlayer targetPlayer;
             public int buildingMask = LayerMask.GetMask("Construction", "Prevent Building", "Deployed", "World", "Terrain", "Tree", "Invisible", "Default");
+            public int groundMask = LayerMask.GetMask("Construction", "Terrain", "World", "Water");
+            public int terrainMask = LayerMask.GetMask("Terrain");
 
             public uint droneid;
             public ulong ownerid;
@@ -965,6 +957,7 @@ namespace Oxide.Plugins
                 {
                     return;
                 }
+
                 switch (type)
                 {
                     case DroneType.Ring:
@@ -1085,7 +1078,7 @@ namespace Oxide.Plugins
 
                 InputMessage message = new InputMessage() { buttons = 0 };
 
-                bool toolow = TooLow(current);
+                bool toolow = TooLow(current) | BigRock(target);
                 bool above = DangerAbove(current);
                 bool frontcrash = DangerFront(current);
                 float terrainHeight = TerrainMeta.HeightMap.GetHeight(current);
@@ -1202,7 +1195,7 @@ namespace Oxide.Plugins
                 target = Instance.monPos[currentMonument];
                 target.y = Instance.configData.Options.minHeight;
 
-                Instance.OnDroneNavChange(player, this, currentMonument);
+                Instance.OnDroneNavChange(this, currentMonument);
             }
 
             void TakeControl()
@@ -1290,7 +1283,15 @@ namespace Oxide.Plugins
             bool DangerFront(Vector3 tgt)
             {
                 RaycastHit hitinfo;
-                if (Physics.Raycast(current, drone.transform.TransformDirection(Vector3.forward), out hitinfo, 4f, buildingMask))
+                if (Physics.Linecast(current, tgt, out hitinfo, terrainMask, QueryTriggerInteraction.Collide))
+                {
+                    if (hitinfo.collider.name.Contains("rock") || hitinfo.collider.name.Contains("Terr"))
+                    {
+                        Instance.DoLog($"{hitinfo.collider.name}");
+                        return true;
+                    }
+                }
+                else if (Physics.Raycast(current, drone.transform.TransformDirection(Vector3.forward), out hitinfo, 10f, buildingMask))
                 {
                     if (hitinfo.GetEntity() != drone)// && hitinfo.distance <= 4f)
                     {
@@ -1312,11 +1313,26 @@ namespace Oxide.Plugins
                 return false;
             }
 
+            bool BigRock(Vector3 tgt)
+            {
+                RaycastHit hitinfo;
+
+                if (Physics.Linecast(current, tgt, out hitinfo, terrainMask, QueryTriggerInteraction.Ignore))
+                {
+                    if (hitinfo.collider.name.Contains("rock") || hitinfo.collider.name.Contains("Terr"))
+                    {
+                        Instance.DoLog($"{rc.rcIdentifier} found {hitinfo.collider.name} in path!", true);
+                        return true;
+                    }
+                }
+                return false;
+            }
+
             bool TooLow(Vector3 tgt)
             {
                 RaycastHit hitinfo;
-                int groundLayer = LayerMask.GetMask("Construction", "Terrain", "World", "Water");
-                if(Physics.Raycast(current, Vector3.down, out hitinfo, 10f, groundLayer) || Physics.Raycast(current, Vector3.up, out hitinfo, 10f, groundLayer))
+
+                if(Physics.Raycast(current, Vector3.down, out hitinfo, 10f, groundMask) || Physics.Raycast(current, Vector3.up, out hitinfo, 10f, groundMask))
                 {
                     if (hitinfo.GetEntity() != drone)
                     {
@@ -1324,6 +1340,7 @@ namespace Oxide.Plugins
                         return true;
                     }
                 }
+
                 return false;
             }
             #endregion
