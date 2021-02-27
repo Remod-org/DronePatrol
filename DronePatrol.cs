@@ -35,13 +35,13 @@ using System.Diagnostics;
 
 namespace Oxide.Plugins
 {
-    [Info("DronePatrol", "RFC1920", "1.0.12")]
+    [Info("DronePatrol", "RFC1920", "1.0.13")]
     [Description("Create server drones that fly and roam, and allow users to spawn a drone of their own.")]
     class DronePatrol : RustPlugin
     {
         #region vars
         [PluginReference]
-        private Plugin Economics, RoadFinder, Friends, Clans, Chute, GridAPI;
+        private readonly Plugin RoadFinder, Friends, Clans, Chute, GridAPI, Economics, ServerRewards;
 
         public GameObject obj;
         public Dictionary<string, Road> roads = new Dictionary<string, Road>();
@@ -118,7 +118,9 @@ namespace Oxide.Plugins
                 ["drone"] = "Drone",
                 ["nosuchplayer"] = "Could not find player named {0}",
                 ["spydrone"] = "Drone {0} sent to spy on {1}",
-                ["helptext"] = "To spawn a drone, type /drone NAMEOFDRONE",
+                ["boughtdrone"] = "Drone purchased for {0} points.",
+                ["droneprice"] = "Drone must be purchased for {0} points.",
+                ["helptext"] = "To spawn a drone, type /drone NAM.EOFDRONE",
                 ["heading"] = "Drone headed to {0}"
             }, this);
         }
@@ -178,6 +180,11 @@ namespace Oxide.Plugins
 
                 if (drone.IsDestroyed | drone.IsBroken())
                 {
+                    var dnav = drone.gameObject.GetComponent<DroneNav>();
+                    if (dnav != null)
+                    {
+                        if (!dnav.player.IsDestroyed) dnav.player.Kill();
+                    }
                     drone.Kill();
                     drones.Remove(d.Key);
                     if (d.Key == configData.Drones["monument"].name)
@@ -202,6 +209,7 @@ namespace Oxide.Plugins
             var dnav = UnityEngine.Object.FindObjectsOfType<DroneNav>();
             foreach (var d in dnav)
             {
+                if (!d.player.IsDestroyed) d.player.Kill();
                 d.drone.Kill();
                 UnityEngine.GameObject.Destroy(d);
             }
@@ -211,11 +219,11 @@ namespace Oxide.Plugins
             }
         }
 
-        private object CanPickupEntity(BasePlayer player, BaseCombatEntity ent)
+        private object CanPickupEntity(BasePlayer player, BaseCombatEntity drone)
         {
-            if (player == null || ent == null) return null;
+            if (player == null || drone == null) return null;
 
-            var dnav = ent.GetComponentInParent<DroneNav>() ?? null;
+            var dnav = drone.GetComponentInParent<DroneNav>() ?? null;
             if(dnav != null)
             {
                 if(dnav.ownerid == 0 && !player.IsAdmin)
@@ -226,6 +234,26 @@ namespace Oxide.Plugins
                 {
                     return true;
                 }
+//                if (configData.Options.setPlayerDroneInCS)
+//                {
+//                    if (dnav.rc != null)
+//                    {
+//                        var stations = UnityEngine.Object.FindObjectsOfType<ComputerStation>();
+//                        if (stations.Count() > 0)
+//                        {
+//                            foreach (var station in stations)
+//                            {
+//                                if (station.OwnerID == drone.OwnerID || IsFriend(station.OwnerID, drone.OwnerID))
+//                                {
+//                                    if (station.controlBookmarks.ContainsKey(dnav.rc.rcIdentifier))
+//                                    {
+//                                        station.controlBookmarks.Remove(dnav.rc.rcIdentifier);
+//                                    }
+//                                }
+//                            }
+//                        }
+//                    }
+//                }
             }
             return null;
         }
@@ -307,10 +335,26 @@ namespace Oxide.Plugins
                 }
                 return;
             }
+
             string droneName = Lang("drone");
             if (args[0] != null) droneName = args[0];
 
             var player = iplayer.Object as BasePlayer;
+
+//            if ((configData.Options.useEconomics | configData.Options.useServerRewards))
+//            {
+//                if (CheckEconomy(player, configData.Options.droneCost))
+//                {
+//                    CheckEconomy(player, configData.Options.droneCost, true);
+//                    Message(iplayer, "boughtdrone", configData.Options.droneCost.ToString());
+//                }
+//                else
+//                {
+//                    Message(iplayer, "droneprice", configData.Options.droneCost.ToString());
+//                    return;
+//                }
+//            }
+
             Vector3 target = player.transform.position;
             target.y = TerrainMeta.HeightMap.GetHeight(player.transform.position) + configData.Options.minHeight;
 
@@ -632,6 +676,7 @@ namespace Oxide.Plugins
             {
                 DoLog($"Player {player.UserIDString} now controlling drone {remoteControllable.GetEnt().ShortPrefabName}");
                 var obj = drone.GetComponent<DroneNav>();
+                if (!obj.player.IsDestroyed) obj.player.Kill();
                 if (obj != null)
                 {
                     if (obj.currentRoad != null)
@@ -802,6 +847,9 @@ namespace Oxide.Plugins
             public bool useFriends;
             public bool useClans;
             public bool useTeams;
+            //public bool useEconomics;
+            //public bool useServerRewards;
+            //public double droneCost;
         }
         #endregion
 
@@ -1078,7 +1126,7 @@ namespace Oxide.Plugins
 
                 InputMessage message = new InputMessage() { buttons = 0 };
 
-                bool toolow = TooLow(current) | BigRock(target);
+                bool toolow = TooLow(current);
                 bool above = DangerAbove(current);
                 bool frontcrash = DangerFront(current);
                 float terrainHeight = TerrainMeta.HeightMap.GetHeight(current);
@@ -1112,7 +1160,12 @@ namespace Oxide.Plugins
                     message.buttons = 64;
                 }
 
-                if (!toolow)
+                if(BigRock(target))
+                {
+                    // Move up, allow forward below
+                    message.buttons = 128;
+                }
+                else if (!toolow)
                 {
                     if (!DangerRight(current) && frontcrash)
                     {
@@ -1141,10 +1194,7 @@ namespace Oxide.Plugins
                 message.mouseDelta.z = z;
 
                 InputState input = new InputState() { current = message };
-
-                //Instance.DoLog($"Moving from {current.ToString()} to {target.ToString()} via {direction.ToString()}");
                 rc.UserInput(input, player);
-
                 last = drone.transform.position;
             }
 
@@ -1718,6 +1768,58 @@ namespace Oxide.Plugins
             }
             return false;
         }
+
+//        private bool CheckEconomy(BasePlayer player, double dronecost, bool withdraw = false, bool deposit = false)
+//        {
+//            double balance = 0;
+//            bool foundmoney = false;
+//
+//            // Check Economics first.  If not in use or balance low, check ServerRewards below
+//            if(configData.Options.useEconomics && Economics)
+//            {
+//                balance = (double)Economics?.CallHook("Balance", player.UserIDString);
+//                if(balance >= dronecost)
+//                {
+//                    foundmoney = true;
+//                    if(withdraw == true)
+//                    {
+//                        var w = (bool)Economics?.CallHook("Withdraw", player.userID, dronecost);
+//                        return w;
+//                    }
+//                    else if(deposit == true)
+//                    {
+//                        var w = (bool)Economics?.CallHook("Deposit", player.userID, dronecost);
+//                    }
+//                }
+//            }
+//
+//            // No money via Economics, or plugin not in use.  Try ServerRewards.
+//            if(configData.Options.useServerRewards && ServerRewards)
+//            {
+//                object bal = ServerRewards?.Call("CheckPoints", player.userID);
+//                balance = Convert.ToDouble(bal);
+//                if(balance >= dronecost && foundmoney == false)
+//                {
+//                    foundmoney = true;
+//                    if(withdraw == true)
+//                    {
+//                        var w = (bool)ServerRewards?.Call("TakePoints", player.userID, (int)dronecost);
+//                        return w;
+//                    }
+//                    else if(deposit == true)
+//                    {
+//                        var w = (bool)ServerRewards?.Call("AddPoints", player.userID, (int)dronecost);
+//                    }
+//                }
+//            }
+//
+//            // Just checking balance without withdrawal - did we find anything?
+//            if(foundmoney == true)
+//            {
+//                return true;
+//            }
+//            return false;
+//        }
         #endregion
     }
 }
