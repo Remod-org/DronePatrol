@@ -1,7 +1,7 @@
 #region License (GPL v3)
 /*
-    Loot Protection - Prevent access to player containers
-    Copyright (c) 2020 RFC1920 <desolationoutpostpve@gmail.com>
+    Drone Patrol - Spawn server drones and allow for player spawn
+    Copyright (c) 2021 RFC1920 <desolationoutpostpve@gmail.com>
 
     This program is free software; you can redistribute it and/or
     modify it under the terms of the GNU General Public License
@@ -35,7 +35,7 @@ using System.Diagnostics;
 
 namespace Oxide.Plugins
 {
-    [Info("DronePatrol", "RFC1920", "1.0.13")]
+    [Info("DronePatrol", "RFC1920", "1.0.14")]
     [Description("Create server drones that fly and roam, and allow users to spawn a drone of their own.")]
     class DronePatrol : RustPlugin
     {
@@ -130,20 +130,22 @@ namespace Oxide.Plugins
             if (startup)
             {
                 var dnav = UnityEngine.Object.FindObjectsOfType<Drone>();
-                var sdrones = configData.Drones.Keys;
-                foreach (var d in dnav)
+                if (dnav != null)
                 {
-                    var rc = d.GetComponent<RemoteControlEntity>();
-                    if (rc != null && sdrones.Contains(rc.rcIdentifier))
+                    var sdrones = configData.Drones.Keys;
+                    foreach (var d in dnav)
                     {
-                        if (!d.IsDestroyed) d.Kill();
-                        if (!rc.IsDestroyed) rc.Kill();
-                        RemoveDroneFromCS(rc.rcIdentifier);
+                        var rc = d.GetComponent<RemoteControlEntity>();
+                        if (rc != null && sdrones.Contains(rc.rcIdentifier))
+                        {
+                            if (!d.IsDestroyed) d.Kill();
+                            if (!rc.IsDestroyed) rc.Kill();
+                            RemoveDroneFromCS(rc.rcIdentifier);
+                        }
                     }
                 }
             }
 
-            // Do some cleanup.  You're welcome.
             // Missing network group
             BaseEntity.saveList.RemoveWhere(p => !p);
             BaseEntity.saveList.RemoveWhere(p => p == null);
@@ -171,7 +173,7 @@ namespace Oxide.Plugins
                     }
                 }
             }
-
+            // Broken/dead drones
             Dictionary<string, BaseEntity> tmpDrones = new Dictionary<string, BaseEntity>(drones);
             foreach(var d in tmpDrones)
             {
@@ -183,7 +185,13 @@ namespace Oxide.Plugins
                     var dnav = drone.gameObject.GetComponent<DroneNav>();
                     if (dnav != null)
                     {
-                        if (!dnav.player.IsDestroyed) dnav.player.Kill();
+                        if (dnav.player != null)
+                        {
+                            if (!dnav.player.IsDestroyed)
+                            {
+                                dnav.player.Kill();
+                            }
+                        }
                     }
                     drone.Kill();
                     drones.Remove(d.Key);
@@ -223,7 +231,7 @@ namespace Oxide.Plugins
         {
             if (player == null || drone == null) return null;
 
-            var dnav = drone.GetComponentInParent<DroneNav>() ?? null;
+            var dnav = drone.gameObject.GetComponentInParent<DroneNav>() ?? null;
             if(dnav != null)
             {
                 if(dnav.ownerid == 0 && !player.IsAdmin)
@@ -341,19 +349,19 @@ namespace Oxide.Plugins
 
             var player = iplayer.Object as BasePlayer;
 
-//            if ((configData.Options.useEconomics | configData.Options.useServerRewards))
-//            {
-//                if (CheckEconomy(player, configData.Options.droneCost))
-//                {
-//                    CheckEconomy(player, configData.Options.droneCost, true);
-//                    Message(iplayer, "boughtdrone", configData.Options.droneCost.ToString());
-//                }
-//                else
-//                {
-//                    Message(iplayer, "droneprice", configData.Options.droneCost.ToString());
-//                    return;
-//                }
-//            }
+            if ((configData.Options.useEconomics | configData.Options.useServerRewards))
+            {
+                if (CheckEconomy(player, configData.Options.droneCost))
+                {
+                    CheckEconomy(player, configData.Options.droneCost, true);
+                    Message(iplayer, "boughtdrone", configData.Options.droneCost.ToString());
+                }
+                else
+                {
+                    Message(iplayer, "droneprice", configData.Options.droneCost.ToString());
+                    return;
+                }
+            }
 
             Vector3 target = player.transform.position;
             target.y = TerrainMeta.HeightMap.GetHeight(player.transform.position) + configData.Options.minHeight;
@@ -676,7 +684,10 @@ namespace Oxide.Plugins
             {
                 DoLog($"Player {player.UserIDString} now controlling drone {remoteControllable.GetEnt().ShortPrefabName}");
                 var obj = drone.GetComponent<DroneNav>();
-                if (!obj.player.IsDestroyed) obj.player.Kill();
+                if (obj.player != null)
+                {
+                    if (!obj.player.IsDestroyed) obj.player.Kill();
+                }
                 if (obj != null)
                 {
                     if (obj.currentRoad != null)
@@ -847,9 +858,9 @@ namespace Oxide.Plugins
             public bool useFriends;
             public bool useClans;
             public bool useTeams;
-            //public bool useEconomics;
-            //public bool useServerRewards;
-            //public double droneCost;
+            public bool useEconomics;
+            public bool useServerRewards;
+            public double droneCost;
         }
         #endregion
 
@@ -887,19 +898,19 @@ namespace Oxide.Plugins
             public float currentMonSize;
             public Vector3 current;
             public Quaternion rotation;
-            public static Vector3 direction;
+            public Vector3 direction;
             public Vector3 target = Vector3.zero;
-            public static Vector3 last = Vector3.zero;
-            public static GameObject slop = new GameObject();
+            public Vector3 last = Vector3.zero;
+            public GameObject slop = new GameObject();
 
-            public static Stopwatch stuckTimer;
+            public Stopwatch stuckTimer;
 
             public int whichPoint;
             public int totalPoints;
 
-            public static bool grounded = true;
-            public static bool started = false;
-            public static bool ending;
+            public bool grounded = true;
+            public bool started = false;
+            public bool ending;
 
             private struct DroneInputState
             {
@@ -1266,7 +1277,6 @@ namespace Oxide.Plugins
             bool DangerLeft(Vector3 tgt)
             {
                 RaycastHit hitinfo;
-                //if (Physics.Raycast(current - drone.transform.right, Vector3.left, out hitinfo, 4f, buildingMask))
                 if (Physics.Raycast(current, drone.transform.TransformDirection(Vector3.left), out hitinfo, 4f, buildingMask))
                 {
                     if (hitinfo.GetEntity() != drone)
@@ -1292,7 +1302,6 @@ namespace Oxide.Plugins
             bool DangerRight(Vector3 tgt)
             {
                 RaycastHit hitinfo;
-                //if (Physics.Raycast(current + drone.transform.right, Vector3.right, out hitinfo, 4f, buildingMask))
                 if (Physics.Raycast(current, drone.transform.TransformDirection(Vector3.right), out hitinfo, 4f, buildingMask))
                 {
                     if (hitinfo.GetEntity() != drone)
@@ -1769,57 +1778,57 @@ namespace Oxide.Plugins
             return false;
         }
 
-//        private bool CheckEconomy(BasePlayer player, double dronecost, bool withdraw = false, bool deposit = false)
-//        {
-//            double balance = 0;
-//            bool foundmoney = false;
-//
-//            // Check Economics first.  If not in use or balance low, check ServerRewards below
-//            if(configData.Options.useEconomics && Economics)
-//            {
-//                balance = (double)Economics?.CallHook("Balance", player.UserIDString);
-//                if(balance >= dronecost)
-//                {
-//                    foundmoney = true;
-//                    if(withdraw == true)
-//                    {
-//                        var w = (bool)Economics?.CallHook("Withdraw", player.userID, dronecost);
-//                        return w;
-//                    }
-//                    else if(deposit == true)
-//                    {
-//                        var w = (bool)Economics?.CallHook("Deposit", player.userID, dronecost);
-//                    }
-//                }
-//            }
-//
-//            // No money via Economics, or plugin not in use.  Try ServerRewards.
-//            if(configData.Options.useServerRewards && ServerRewards)
-//            {
-//                object bal = ServerRewards?.Call("CheckPoints", player.userID);
-//                balance = Convert.ToDouble(bal);
-//                if(balance >= dronecost && foundmoney == false)
-//                {
-//                    foundmoney = true;
-//                    if(withdraw == true)
-//                    {
-//                        var w = (bool)ServerRewards?.Call("TakePoints", player.userID, (int)dronecost);
-//                        return w;
-//                    }
-//                    else if(deposit == true)
-//                    {
-//                        var w = (bool)ServerRewards?.Call("AddPoints", player.userID, (int)dronecost);
-//                    }
-//                }
-//            }
-//
-//            // Just checking balance without withdrawal - did we find anything?
-//            if(foundmoney == true)
-//            {
-//                return true;
-//            }
-//            return false;
-//        }
+        private bool CheckEconomy(BasePlayer player, double cost, bool withdraw = false, bool deposit = false)
+        {
+            double balance = 0;
+            bool foundmoney = false;
+
+            // Check Economics first.  If not in use or balance low, check ServerRewards below
+            if(configData.Options.useEconomics && Economics)
+            {
+                balance = (double)Economics?.CallHook("Balance", player.UserIDString);
+                if(balance >= cost)
+                {
+                    foundmoney = true;
+                    if(withdraw == true)
+                    {
+                        var w = (bool)Economics?.CallHook("Withdraw", player.userID, cost);
+                        return w;
+                    }
+                    else if(deposit == true)
+                    {
+                        var w = (bool)Economics?.CallHook("Deposit", player.userID, cost);
+                    }
+                }
+            }
+
+            // No money via Economics, or plugin not in use.  Try ServerRewards.
+            if(configData.Options.useServerRewards && ServerRewards)
+            {
+                object bal = ServerRewards?.Call("CheckPoints", player.userID);
+                balance = Convert.ToDouble(bal);
+                if(balance >= cost && foundmoney == false)
+                {
+                    foundmoney = true;
+                    if(withdraw == true)
+                    {
+                        var w = (bool)ServerRewards?.Call("TakePoints", player.userID, (int)cost);
+                        return w;
+                    }
+                    else if(deposit == true)
+                    {
+                        var w = (bool)ServerRewards?.Call("AddPoints", player.userID, (int)cost);
+                    }
+                }
+            }
+
+            // Just checking balance without withdrawal - did we find anything?
+            if(foundmoney == true)
+            {
+                return true;
+            }
+            return false;
+        }
         #endregion
     }
 }
