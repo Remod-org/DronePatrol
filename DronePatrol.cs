@@ -32,6 +32,7 @@ using Oxide.Game.Rust.Cui;
 using System.Globalization;
 using System;
 using System.Diagnostics;
+using Network;
 
 namespace Oxide.Plugins
 {
@@ -288,6 +289,44 @@ namespace Oxide.Plugins
                 station.controlBookmarks.Add(rc.rcIdentifier, drone.net.ID);
             }
         }
+
+        void OnEntityKill(BaseCombatEntity drone, HitInfo info)
+        {
+            string name = null;
+            var dnav = drone.gameObject.GetComponentInParent<DroneNav>() ?? null;
+            if (dnav != null)
+            {
+                Puts($"Drone {dnav.rc.rcIdentifier} died");
+                name = dnav.rc.rcIdentifier;
+                if (!drone.IsDestroyed) UnityEngine.GameObject.Destroy(drone);
+                if (!dnav.rc.IsDestroyed) UnityEngine.GameObject.Destroy(dnav.rc);
+
+                foreach(var item in drones.Where(kvp => kvp.Value == drone).ToList())
+                {
+                    drones.Remove(item.Key);
+                }
+
+                foreach (var item in configData.Drones.Where(kvp => kvp.Value.name == name).ToList())
+                {
+                    if (item.Value.spawn)
+                    {
+                        switch (item.Key)
+                        {
+                            case "monument":
+                                SpawnMonumentDrone();
+                                break;
+                            case "ring":
+                                SpawnRingDrone();
+                                break;
+                            case "road":
+                                SpawnRoadDrone();
+                                break;
+                        }
+                    }
+                }
+            }
+        }
+
         void OnEntitySpawned(ComputerStation station)
         {
             if (!initdone) return;
@@ -384,7 +423,7 @@ namespace Oxide.Plugins
                 Message(iplayer, "notauthorized");
                 return;
             }
-            string debug = string.Join(",", args); Puts($"{debug}");
+            //string debug = string.Join(",", args); Puts($"{debug}");
             if (args.Length > 0)
             {
                 if(args.Length > 1)
@@ -463,7 +502,15 @@ namespace Oxide.Plugins
             }
             if (args.Length > 0)
             {
-                if(args[0] == "status")
+                if(args[0] == "kill")
+                {
+                    var nav = drones[configData.Drones["monument"].name].GetComponent<DroneNav>();
+                    if (nav != null)
+                    {
+                        nav.drone.Kill();
+                    }
+                }
+                else if(args[0] == "status")
                 {
                     var nav = drones[configData.Drones["monument"].name].GetComponent<DroneNav>();
                     if(nav != null)
@@ -528,7 +575,15 @@ namespace Oxide.Plugins
             }
             if (args.Length > 0)
             {
-                if (args[0] == "status")
+                if(args[0] == "kill")
+                {
+                    var nav = drones[configData.Drones["road"].name].GetComponent<DroneNav>();
+                    if (nav != null)
+                    {
+                        nav.drone.Kill();
+                    }
+                }
+                else if (args[0] == "status")
                 {
                     var nav = drones[configData.Drones["road"].name].GetComponent<DroneNav>();
                     if (nav != null)
@@ -592,7 +647,15 @@ namespace Oxide.Plugins
             }
             if (args.Length > 0)
             {
-                if (args[0] == "status")
+                if(args[0] == "kill")
+                {
+                    var nav = drones[configData.Drones["ring"].name].GetComponent<DroneNav>();
+                    if (nav != null)
+                    {
+                        nav.drone.Kill();
+                    }
+                }
+                else if (args[0] == "status")
                 {
                     var nav = drones[configData.Drones["ring"].name].GetComponent<DroneNav>();
                     if (nav != null)
@@ -1268,6 +1331,11 @@ namespace Oxide.Plugins
                         player = GameManager.server.CreateEntity("assets/prefabs/player/player.prefab", Vector3.zero, new Quaternion()).ToPlayer();
                         player.Spawn();
                         player.displayName = rc.rcIdentifier + " Pilot";
+                        AntiHack.ShouldIgnore(player);
+                        player._limitedNetworking = true;
+                        player.EnablePlayerCollider();
+                        var connections = Net.sv.connections.Where(con => con.connected && con.isAuthenticated && con.player is BasePlayer && con.player != player).ToList();
+                        player.OnNetworkSubscribersLeave(connections);
                     }
                     rc.InitializeControl(player);
                 }
