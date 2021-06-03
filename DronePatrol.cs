@@ -36,7 +36,7 @@ using Network;
 
 namespace Oxide.Plugins
 {
-    [Info("DronePatrol", "RFC1920", "1.0.14")]
+    [Info("DronePatrol", "RFC1920", "1.0.15")]
     [Description("Create server drones that fly and roam, and allow users to spawn a drone of their own.")]
     class DronePatrol : RustPlugin
     {
@@ -1832,7 +1832,7 @@ namespace Oxide.Plugins
                 {
                     if (player.currentTeam != 0)
                     {
-                        RelationshipManager.PlayerTeam playerTeam = RelationshipManager.Instance.FindTeam(player.currentTeam);
+                        RelationshipManager.PlayerTeam playerTeam = RelationshipManager.ServerInstance.FindTeam(player.currentTeam);
                         if (playerTeam != null)
                         {
                             if (playerTeam.members.Contains(ownerid))
