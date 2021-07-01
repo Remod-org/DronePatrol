@@ -36,7 +36,7 @@ using Network;
 
 namespace Oxide.Plugins
 {
-    [Info("DronePatrol", "RFC1920", "1.0.15")]
+    [Info("DronePatrol", "RFC1920", "1.0.16")]
     [Description("Create server drones that fly and roam, and allow users to spawn a drone of their own.")]
     class DronePatrol : RustPlugin
     {
@@ -179,7 +179,7 @@ namespace Oxide.Plugins
             foreach(var d in tmpDrones)
             {
                 var drone = d.Value;
-                (drone as BaseCombatEntity).diesAtZeroHealth = true;
+                //(drone as BaseCombatEntity).diesAtZeroHealth = true;
 
                 if (drone.IsDestroyed | drone.IsBroken())
                 {
@@ -220,7 +220,7 @@ namespace Oxide.Plugins
             {
                 if (!d.player.IsDestroyed) d.player.Kill();
                 d.drone.Kill();
-                UnityEngine.GameObject.Destroy(d);
+                UnityEngine.Object.Destroy(d);
             }
             foreach (var player in BasePlayer.activePlayerList)
             {
