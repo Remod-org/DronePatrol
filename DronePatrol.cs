@@ -369,6 +369,7 @@ namespace Oxide.Plugins
                         realName = d.Key;
                     }
                 }
+                if (realName == "") continue;
                 BaseEntity realDrone = drones[realName];
                 if (realDrone == null) continue;
 
@@ -444,7 +445,7 @@ namespace Oxide.Plugins
             {
                 newName = droneName + i.ToString();
                 i++;
-                if (i > 20) break;
+                if (i > 10) break;
             }
             rc?.UpdateIdentifier(newName);
             drone.Spawn();
@@ -522,7 +523,7 @@ namespace Oxide.Plugins
                 {
                     newName = droneName + i.ToString();
                     i++;
-                    if (i > 20) break;
+                    if (i > 10) break;
                 }
                 rc?.UpdateIdentifier($"{newName}");
 
@@ -896,7 +897,8 @@ namespace Oxide.Plugins
                     playerDronesImmortal = false,
                     useClans = false,
                     useFriends = false,
-                    useTeams = false
+                    useTeams = false,
+                    DisplayMapMarkersOnServerDrones = true
                 },
                 Drones = new Dictionary<string, DroneInfo>(),
                 Version = Version
@@ -958,6 +960,7 @@ namespace Oxide.Plugins
             public bool useEconomics;
             public bool useServerRewards;
             public double droneCost;
+            public bool DisplayMapMarkersOnServerDrones;
         }
         #endregion
 
@@ -997,6 +1000,7 @@ namespace Oxide.Plugins
             public InputState input;
 
             public Road currentRoad;
+            public string droneName;
             public string currentRoadName;
             public string currentMonument;
             public float currentMonSize;
@@ -1015,6 +1019,8 @@ namespace Oxide.Plugins
             public bool grounded = true;
             public bool started;
             public bool ending;
+            public int markerdelay;
+            public MapMarkerGenericRadius marker = null;
 
             private struct DroneInputState
             {
@@ -1046,6 +1052,7 @@ namespace Oxide.Plugins
                 if (!player.IsDestroyed) { Destroy(player.gameObject); player.Kill(); }
                 if (!drone.IsDestroyed) { Destroy(drone.gameObject); drone.Kill(); }
                 if (!rc.IsDestroyed) { Destroy(rc.gameObject); rc.Kill(); }
+                if (!marker.IsDestroyed) { Destroy(marker.gameObject); marker.Kill(); }
             }
 
             private void Start()
@@ -1068,10 +1075,11 @@ namespace Oxide.Plugins
                 {
                     newName = name + i.ToString();
                     i++;
-                    if (i > 20) break;
+                    if (i > 10) break;
                 }
                 rc.UpdateIdentifier(newName, true);
                 Instance.DoLog($"Set name to '{newName}'");
+                droneName = newName;
                 return newName;
             }
 
@@ -1133,6 +1141,38 @@ namespace Oxide.Plugins
                 Instance.DoLog($"{rc.rcIdentifier} road points changed to {newpts.Count}");
             }
 
+            private void UpdateMarker()
+            {
+                if (!Instance.configData.Options.DisplayMapMarkersOnServerDrones) return;
+                if (type != DroneType.Road && type != DroneType.Ring && type != DroneType.MonAll && type != DroneType.MonSingle) return;
+                markerdelay++;
+                if (markerdelay > 50)
+                {
+                    markerdelay = 0;
+                    if (marker != null)
+                    {
+                        marker.transform.position = drone.transform.position;
+                        marker.SendUpdate();
+                        marker.SendNetworkUpdateImmediate();
+                        return;
+                    }
+
+                    Instance.DoLog($"Creating mapmarker for {droneName} at {drone.transform.position}");
+                    marker = GameManager.server.CreateEntity("assets/prefabs/tools/map/genericradiusmarker.prefab", drone.transform.position) as MapMarkerGenericRadius;
+                    if (marker != null)
+                    {
+                        marker.alpha = 0.8f;
+                        marker.color1 = Color.black;
+                        marker.color2 = Color.gray;
+                        marker.name = droneName;
+                        marker.radius = 0.15f;
+                        marker.Spawn();
+                        marker.SendUpdate();
+                        marker.SendNetworkUpdateImmediate();
+                    }
+                }
+            }
+
             private void Update()
             {
                 // You might be tempted to switch to FixedUpdate, but then the viewing player will take over flight...
@@ -1173,6 +1213,7 @@ namespace Oxide.Plugins
                         }
                         break;
                 }
+                UpdateMarker();
             }
 
             private void MoveToRoadPoint()
