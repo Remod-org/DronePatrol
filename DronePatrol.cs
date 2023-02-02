@@ -145,7 +145,7 @@ namespace Oxide.Plugins
 
         private void CheckDrones(bool startup = false)
         {
-            Puts("Checking drones");
+            DoLog("Checking drones");
             if (startup)
             {
                 Drone[] drones = UnityEngine.Object.FindObjectsOfType<Drone>();
