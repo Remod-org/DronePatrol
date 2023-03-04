@@ -33,7 +33,7 @@ using System.Diagnostics;
 
 namespace Oxide.Plugins
 {
-    [Info("DronePatrol", "RFC1920", "1.0.20")]
+    [Info("DronePatrol", "RFC1920", "1.0.21")]
     [Description("Create server drones that fly and roam, and allow users to spawn a drone of their own.")]
     internal class DronePatrol : RustPlugin
     {
@@ -138,6 +138,8 @@ namespace Oxide.Plugins
                 ["drone"] = "Drone",
                 ["nosuchplayer"] = "Could not find player named {0}",
                 ["spydrone"] = "Drone {0} sent to spy on {1}",
+                ["spydronekilled"] = "Drone {0} has been killed",
+                ["nosuchspydrone"] = "Could not find spy drone named {0}",
                 ["boughtdrone"] = "Drone purchased for {0} points.",
                 ["droneprice"] = "Drone must be purchased for {0} points.",
                 ["helptext"] = "To spawn a drone, type /drone NAM.EOFDRONE",
@@ -289,7 +291,7 @@ namespace Oxide.Plugins
             if (dnav != null)
             {
                 string oldName = dnav.drone.rcIdentifier;
-                Puts($"Drone {oldName} died");
+                DoLog($"Drone {oldName} died");
                 RemoveDroneFromCS(oldName);
                 UnityEngine.Object.Destroy(dnav.gameObject);
 
@@ -369,7 +371,7 @@ namespace Oxide.Plugins
                     {
                         if (d != null && d.rcIdentifier == args[0])
                         {
-                            Puts($"Killing {d.rcIdentifier}");
+                            DoLog($"Killing {d.rcIdentifier}");
                             RemoveDroneFromCS(d.rcIdentifier);
                             UnityEngine.Object.Destroy(d.gameObject);
                         }
@@ -430,14 +432,19 @@ namespace Oxide.Plugins
                 {
                     if (args[1] == "kill")
                     {
-                        Drone[] dnav = UnityEngine.Object.FindObjectsOfType<Drone>();
-                        Dictionary<string, DroneInfo>.KeyCollection sdrones = configData.Drones.Keys;
-                        foreach (Drone d in dnav)
+                        IRemoteControllable tokillir = RemoteControlEntity.FindByID($"SPY{args[0].ToUpper()}");
+                        if (tokillir != null)
                         {
-                            UnityEngine.Object.Destroy(d.gameObject);
+                            string tkid = tokillir.GetIdentifier();
+                            Drone tokill = tokillir as Drone;
+                            tokill.Kill();
+                            UnityEngine.Object.Destroy(tokill);
+                            Message(iplayer, "spydronekilled", tkid);
+                            return;
                         }
+                        Message(iplayer, "nosuchspydrone", args[0].ToUpper());
+                        return;
                     }
-                    return;
                 }
                 else if (args[0] == "list")
                 {
@@ -453,25 +460,27 @@ namespace Oxide.Plugins
                     return;
                 }
 
-                BasePlayer pl = FindPlayerByName(args[0]);
-                if (pl == null)
+                BasePlayer targetPlayer = FindPlayerByName(args[0]);
+                if (targetPlayer == null)
                 {
                     Message(iplayer, "nosuchplayer", args[0]);
                     return;
                 }
 
-                Vector3 target = pl.transform.position;
-                target.y = TerrainMeta.HeightMap.GetHeight(pl.transform.position) + configData.Options.minHeight;
+                Vector3 target = targetPlayer.transform.position;
+                target.y = TerrainMeta.HeightMap.GetHeight(targetPlayer.transform.position) + configData.Options.minHeight;
 
-                Drone drone = GameManager.server.CreateEntity(droneprefab, target, pl.transform.rotation) as Drone;
+                Drone drone = GameManager.server.CreateEntity(droneprefab, target, targetPlayer.transform.rotation) as Drone;
                 DroneNav obj = drone.gameObject.AddComponent<DroneNav>();
 
                 BasePlayer player = iplayer.Object as BasePlayer;
+                drone.OwnerID = player.userID;
                 obj.ownerid = player.userID;
                 obj.SetType(DroneType.Spy);
-                obj.SetPlayerTarget(pl);
+                obj.SetPlayerTarget(targetPlayer);
+                obj.enabled = true;
 
-                string plName = pl.displayName ?? pl.UserIDString;
+                string plName = targetPlayer.displayName ?? targetPlayer.UserIDString;
                 string droneName = $"SPY{plName}";
 
                 int i = 1;
@@ -736,10 +745,9 @@ namespace Oxide.Plugins
             Drone drone = remoteControllable as Drone;
             if (drone != null)
             {
-                CameraViewerId viewerId = drone.ControllingViewerId.Value;
-
-                drone.StopControl(viewerId);
-                drone.InitializeControl(new CameraViewerId(player.userID, 0));
+                //CameraViewerId viewerId = drone.ControllingViewerId.Value;
+                //drone.StopControl(viewerId);
+                //drone.InitializeControl(new CameraViewerId(player.userID, 0));
 
                 DroneNav obj = drone.gameObject.GetComponent<DroneNav>();
                 if (obj != null)
@@ -751,12 +759,12 @@ namespace Oxide.Plugins
                         DoLog($"Player {player?.UserIDString} now controlling drone {drone?.rcIdentifier}, owned by {drone?.OwnerID}");
                     }
 
-                    if (obj.currentRoad != null)
+                    if (obj?.currentRoad != null)
                     {
-                        string roadname = string.IsNullOrEmpty(obj.currentRoadName) ? Lang("nexpoint") : obj.currentRoadName;
+                        string roadname = string.IsNullOrEmpty(obj?.currentRoadName) ? Lang("nexpoint") : obj?.currentRoadName;
                         DroneGUI(player, obj, Lang("heading", roadname, roadname));
                     }
-                    else if (obj.currentMonument.Length > 0)
+                    else if (obj.currentMonument?.Length > 0)
                     {
                         DroneGUI(player, obj, Lang("heading", obj.currentMonument, obj.currentMonument));
                     }
@@ -995,9 +1003,14 @@ namespace Oxide.Plugins
 
             private void OnDestroy()
             {
-                if (drone.ControllingViewerId.HasValue) { drone.StopControl(new CameraViewerId(controllingUserId, 0)); }
-                if (!drone.IsDestroyed) { Destroy(drone?.gameObject); drone?.Kill(); }
-                if (!marker.IsDestroyed) { Destroy(marker?.gameObject); marker?.Kill(); }
+                if (drone?.IsDestroyed == false)
+                {
+                    Destroy(drone?.gameObject); drone?.Kill();
+                }
+                if (marker?.IsDestroyed == false)
+                {
+                    Destroy(marker?.gameObject); marker?.Kill();
+                }
             }
 
             private void Start()
@@ -1120,6 +1133,7 @@ namespace Oxide.Plugins
 
             private void Update()
             {
+                drone.SetHealth(100);
                 // You might be tempted to switch to FixedUpdate, but then the viewing player will take over flight...
                 if (!enabled || drone.IsDead() || !drone.isSpawned)
                 {
@@ -1200,7 +1214,7 @@ namespace Oxide.Plugins
                 }
 
                 drone.transform.LookAt(target);
-                DoMoveDrone(direction);
+                DoMoveDrone();
             }
 
             private void MoveToMonument()
@@ -1223,23 +1237,31 @@ namespace Oxide.Plugins
                     target.y = GetHeight(target);
                 }
                 drone.transform.LookAt(target);
-                DoMoveDrone(direction);
+                DoMoveDrone();
+            }
+
+            public void Stabilize()
+            {
+                Quaternion q = Quaternion.FromToRotation(drone.transform.up, Vector3.up) * drone.transform.rotation;
+                drone.transform.rotation = Quaternion.Slerp(drone.transform.rotation, q, Time.deltaTime * 3.5f);
+                //drone.viewEyes.localRotation = Quaternion.Euler(Vector3.down);
             }
 
             private void FollowPlayer()
             {
                 if (drone == null) return;
                 if (targetPlayer == null) return;
-
                 current = drone.transform.position;
                 target = targetPlayer.transform.position;
+                target.y = targetPlayer.transform.position.y + Instance.configData.Options.minHeight;
+                drone.transform.position = target;
                 direction = (target - current).normalized;
-
-                drone.transform.LookAt(target);
-                DoMoveDrone(direction);
+                //drone.viewEyes.transform.LookAt(targetPlayer.transform.position); // does nothing
+                Stabilize();
+                last = drone.transform.position;
             }
 
-            private void DoMoveDrone(Vector3 direction)
+            private void DoMoveDrone()
             {
                 TakeControl();
 
