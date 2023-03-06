@@ -33,13 +33,13 @@ using System.Diagnostics;
 
 namespace Oxide.Plugins
 {
-    [Info("DronePatrol", "RFC1920", "1.0.21")]
+    [Info("DronePatrol", "RFC1920", "1.0.22")]
     [Description("Create server drones that fly and roam, and allow users to spawn a drone of their own.")]
     internal class DronePatrol : RustPlugin
     {
         #region vars
         [PluginReference]
-        private readonly Plugin RoadFinder, Friends, Clans, Chute, GridAPI, Economics, ServerRewards;
+        private readonly Plugin RoadFinder, Friends, Clans, Chute, GridAPI, Economics, ServerRewards, BankSystem;
 
         public GameObject obj;
         public Dictionary<string, Road> roads = new Dictionary<string, Road>();
@@ -112,18 +112,26 @@ namespace Oxide.Plugins
                 }
             }
 
+            FindMonuments();
+
             object x = RoadFinder?.CallHook("GetRoads");
             if (x != null)
             {
                 string json = JsonConvert.SerializeObject(x);
                 roads = JsonConvert.DeserializeObject<Dictionary<string, Road>>(json);
-                SpawnRingDrone();
-                SpawnRoadDrone();
+                NextTick(() =>
+                {
+                    SpawnRingDrone();
+                    SpawnRoadDrone();
+                });
             }
 
-            FindMonuments();
-            SpawnMonumentDrone();
-            CheckDrones(true);
+            NextTick(() =>
+            {
+                SpawnMonumentDrone();
+                CheckDrones(true);
+            });
+
             initdone = true;
         }
 
@@ -285,7 +293,17 @@ namespace Oxide.Plugins
             }
         }
 
-        private void OnEntityKill(Drone drone)
+        private void OnEntityDeath(Drone drone, HitInfo info)
+        {
+            CheckAndRespawnDrones(drone);
+        }
+
+        //private void OnEntityKill(Drone drone)
+        //{
+        //    CheckAndRespawnDrones(drone);
+        //}
+
+        private void CheckAndRespawnDrones(Drone drone)
         {
             DroneNav dnav = drone.gameObject.GetComponentInParent<DroneNav>();
             if (dnav != null)
@@ -414,6 +432,8 @@ namespace Oxide.Plugins
                 if (i > 10) break;
             }
             drone?.UpdateIdentifier(newName, true);
+            drone._maxHealth = 1000;
+            drone.SetHealth(1000);
             drone.Spawn();
             drone.SendNetworkUpdateImmediate();
         }
@@ -492,7 +512,8 @@ namespace Oxide.Plugins
                     if (i > 10) break;
                 }
                 drone?.UpdateIdentifier($"{newName}", true);
-
+                drone._maxHealth = 1000;
+                drone.SetHealth(1000);
                 drone.Spawn();
                 drone.SendNetworkUpdateImmediate();
                 SetDroneInCS(droneName);
@@ -569,6 +590,8 @@ namespace Oxide.Plugins
             DroneNav obj = drone.gameObject.AddComponent<DroneNav>();
             obj.ownerid = player.userID;
             obj.type = DroneType.MonAll;
+            drone._maxHealth = 1000;
+            drone.SetHealth(1000);
             drone.Spawn();
             Message(iplayer, "Spawned Monument drone");
         }
@@ -635,6 +658,8 @@ namespace Oxide.Plugins
             Drone drone = GameManager.server.CreateEntity(droneprefab, target, player.transform.rotation) as Drone;
             DroneNav obj = drone.gameObject.AddComponent<DroneNav>();
             obj.ownerid = player.userID;
+            drone._maxHealth = 1000;
+            drone.SetHealth(1000);
             drone.Spawn();
             string road = configData.Drones["road"].start;
             DoLog($"CmdSpawnRoadDrone: Moving to start of {road}...");
@@ -685,6 +710,8 @@ namespace Oxide.Plugins
             Drone drone = GameManager.server.CreateEntity(droneprefab, target, player.transform.rotation) as Drone;
             DroneNav obj = drone.gameObject.AddComponent<DroneNav>();
             obj.ownerid = player.userID;
+            drone._maxHealth = 1000;
+            drone.SetHealth(1000);
             drone.Spawn();
             string road = configData.Drones["ring"].start;
             DoLog($"CmdSpawnRingDrone: Moving to start of {road}...");
@@ -927,6 +954,7 @@ namespace Oxide.Plugins
             public bool useTeams;
             public bool useEconomics;
             public bool useServerRewards;
+            public bool useBankSystem;
             public double droneCost;
             public bool DisplayMapMarkersOnServerDrones;
             public bool SetMaxControlRange;
@@ -1133,7 +1161,8 @@ namespace Oxide.Plugins
 
             private void Update()
             {
-                drone.SetHealth(100);
+                drone._maxHealth = 1000;
+                drone.SetHealth(1000);
                 // You might be tempted to switch to FixedUpdate, but then the viewing player will take over flight...
                 if (!enabled || drone.IsDead() || !drone.isSpawned)
                 {
@@ -1244,7 +1273,6 @@ namespace Oxide.Plugins
             {
                 Quaternion q = Quaternion.FromToRotation(drone.transform.up, Vector3.up) * drone.transform.rotation;
                 drone.transform.rotation = Quaternion.Slerp(drone.transform.rotation, q, Time.deltaTime * 3.5f);
-                //drone.viewEyes.localRotation = Quaternion.Euler(Vector3.down);
             }
 
             private void FollowPlayer()
@@ -1310,14 +1338,14 @@ namespace Oxide.Plugins
                 //}
                 if (!toolow)
                 {
-                    if (!DangerRight(current) && frontcrash)
+                    if (!DangerLeft(current) && frontcrash)
                     {
                         // Move RIGHT
                         Instance.DoLog($"{drone.rcIdentifier} Moving RIGHT to avoid frontal crash", true);
                         message.buttons = 16;
                         z = 1;
                     }
-                    else if (!DangerLeft(current) && frontcrash)
+                    else if (!DangerRight(current) && frontcrash)
                     {
                         // Move LEFT
                         Instance.DoLog($"{drone.rcIdentifier} Moving LEFT to avoid frontal crash", true);
@@ -1705,6 +1733,8 @@ namespace Oxide.Plugins
             string newName = obj.SetName(configData.Drones["road"].name);
             obj.SetRoad(road);
             obj.enabled = true;
+            drone._maxHealth = 1000;
+            drone.SetHealth(1000);
             drone.Spawn();
 
             drones.Add(newName, drone);
@@ -1735,6 +1765,8 @@ namespace Oxide.Plugins
             string newName = obj.SetName(configData.Drones["ring"].name);
             obj.SetRoad(road, true);
             obj.enabled = true;
+            drone._maxHealth = 1000;
+            drone.SetHealth(1000);
             drone.Spawn();
 
             drones.Add(newName, drone);
@@ -1754,6 +1786,8 @@ namespace Oxide.Plugins
             obj.SetType(DroneType.MonAll);
             string newName = obj.SetName(configData.Drones["monument"].name);
             obj.enabled = true;
+            drone._maxHealth = 1000;
+            drone.SetHealth(1000);
             drone.Spawn();
 
             drones.Add(newName, drone);
@@ -1946,6 +1980,24 @@ namespace Oxide.Plugins
                 }
             }
 
+            // No money via Economics nor ServerRewards, or plugins not in use.  Try BankSystem.
+            if (configData.Options.useBankSystem && BankSystem)
+            {
+                object bal = BankSystem?.Call("Balance", player.userID);
+                balance = Convert.ToDouble(bal);
+                if (balance >= cost && !foundmoney)
+                {
+                    foundmoney = true;
+                    if (withdraw)
+                    {
+                        return (bool)BankSystem?.Call("Withdraw", player.userID, (int)cost);
+                    }
+                    else if (deposit)
+                    {
+                        bool w = (bool)BankSystem?.Call("Deposit", player.userID, (int)cost);
+                    }
+                }
+            }
             // Just checking balance without withdrawal - did we find anything?
             return foundmoney;
         }
