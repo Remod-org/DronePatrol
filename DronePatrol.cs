@@ -33,7 +33,7 @@ using System.Diagnostics;
 
 namespace Oxide.Plugins
 {
-    [Info("DronePatrol", "RFC1920", "1.0.22")]
+    [Info("DronePatrol", "RFC1920", "1.0.23")]
     [Description("Create server drones that fly and roam, and allow users to spawn a drone of their own.")]
     internal class DronePatrol : RustPlugin
     {
@@ -57,7 +57,7 @@ namespace Oxide.Plugins
         private const string permAdmin  = "dronepatrol.admin";
         private const string DRONEGUI = "dronepatrol.hud";
 
-        public static Dictionary<string, BaseEntity> drones = new Dictionary<string, BaseEntity>();
+        public static Dictionary<string, uint> drones = new Dictionary<string, uint>();
         public static bool initdone;
 
         public class Road
@@ -94,25 +94,19 @@ namespace Oxide.Plugins
                 float maxControlRange = configData.Options?.maxControlRange > 0 ? configData.Options.maxControlRange : 5000;
                 ConsoleSystem.Run(ConsoleSystem.Option.Server.FromServer(), $"drone.maxControlRange {maxControlRange}");
             }
-            drones = new Dictionary<string, BaseEntity>();
+
+            LoadData();
+
             foreach (ComputerStation station in UnityEngine.Object.FindObjectsOfType<ComputerStation>())
             {
-                if (station.controlBookmarks.Contains(configData.Drones["road"].name)) station.controlBookmarks.Remove(configData.Drones["road"].name);
-                if (station.controlBookmarks.Contains(configData.Drones["ring"].name)) station.controlBookmarks.Remove(configData.Drones["ring"].name);
-                if (station.controlBookmarks.Contains(configData.Drones["monument"].name)) station.controlBookmarks.Remove(configData.Drones["monument"].name);
-
-                for (int i = 1; i < 10; i++)
+                foreach (string drone in drones.Keys)
                 {
-                    string testName = configData.Drones["road"].name + i.ToString();
-                    if (station.controlBookmarks.Contains(testName)) station.controlBookmarks.Remove(testName);
-                    testName = configData.Drones["ring"].name + i.ToString();
-                    if (station.controlBookmarks.Contains(testName)) station.controlBookmarks.Remove(testName);
-                    testName = configData.Drones["monument"].name + i.ToString();
-                    if (station.controlBookmarks.Contains(testName)) station.controlBookmarks.Remove(testName);
+                    if (station.controlBookmarks.Contains(drone)) station.controlBookmarks.Remove(drone);
                 }
             }
 
             FindMonuments();
+            CheckDrones(true);
 
             object x = RoadFinder?.CallHook("GetRoads");
             if (x != null)
@@ -126,11 +120,7 @@ namespace Oxide.Plugins
                 });
             }
 
-            NextTick(() =>
-            {
-                SpawnMonumentDrone();
-                CheckDrones(true);
-            });
+            NextTick(() => SpawnMonumentDrone());
 
             initdone = true;
         }
@@ -158,26 +148,52 @@ namespace Oxide.Plugins
 
         private void CheckDrones(bool startup = false)
         {
-            DoLog("Checking drones");
             if (startup)
             {
-                Drone[] drones = UnityEngine.Object.FindObjectsOfType<Drone>();
-                if (drones != null)
+                DoLog("Checking drones");
+                Drone[] allDrones = UnityEngine.Object.FindObjectsOfType<Drone>();
+                if (allDrones != null)
                 {
-                    Dictionary<string, DroneInfo>.KeyCollection sdrones = configData.Drones.Keys;
-                    foreach (Drone drone in drones)
+                    DoLog("Searching for drones with NONE as name");
+                    foreach (Drone drone in allDrones)
                     {
                         if (drone?.rcIdentifier == "NONE" && !drone.IsDestroyed)
                         {
                             UnityEngine.Object.Destroy(drone.gameObject);
-                        }
-                        else if (drone != null && sdrones.Contains(drone?.rcIdentifier))
-                        {
-                            if (!drone.IsDestroyed) UnityEngine.Object.Destroy(drone.gameObject);
                             RemoveDroneFromCS(drone?.rcIdentifier);
                         }
                     }
                 }
+
+                foreach (KeyValuePair<string, uint> d in new Dictionary<string, uint>(drones))
+                {
+                    Drone drone = BaseNetworkable.serverEntities.Find(new NetworkableId(d.Value)) as Drone;
+                    if (drone != null)
+                    {
+                        DoLog($"Killing spawned drone {d.Key}({d.Value})");
+                        drone?.Kill();
+                        UnityEngine.Object.Destroy(drone?.gameObject);
+                        RemoveDroneFromCS(drone?.rcIdentifier);
+                        drones.Remove(drone?.rcIdentifier);
+                    }
+                    if (!configData.Drones["monument"].name.Equals(d.Key) && !configData.Drones["ring"].name.Equals(d.Key) && !configData.Drones["road"].name.Equals(d.Key))
+                    {
+                        try
+                        {
+                            DoLog($"Killing spawned drone {d.Key})");
+                            drone?.Kill();
+                            UnityEngine.Object.Destroy(drone?.gameObject);
+                        }
+                        catch { }
+                        finally
+                        {
+                            RemoveDroneFromCS(drone?.rcIdentifier);
+                            drones.Remove(drone?.rcIdentifier);
+                        }
+                    }
+                }
+
+                SaveData();
             }
 
             // Missing network group
@@ -185,29 +201,30 @@ namespace Oxide.Plugins
             BaseEntity.saveList.RemoveWhere(p => p == null);
 
             // Broken/dead drones
-            foreach (KeyValuePair<string, BaseEntity> d in new Dictionary<string, BaseEntity>(drones))
+            DoLog("Checking configured drones");
+            foreach (KeyValuePair<string, uint> d in new Dictionary<string, uint>(drones))
             {
-                BaseEntity drone = d.Value;
+                BaseEntity drone = BaseNetworkable.serverEntities.Find(new NetworkableId(d.Value)) as BaseEntity;
                 //(drone as BaseCombatEntity).diesAtZeroHealth = true;
-
-                if (drone.IsDestroyed || drone.IsBroken())
+                DoLog($"--Checking {d.Key}({d.Value})");
+                if (drone == null) continue;
+                if (drone.IsDestroyed || drone.IsBroken() || !drone.HasFlag(BaseEntity.Flags.Reserved2))
                 {
-                    DroneNav dnav = drone.gameObject.GetComponent<DroneNav>();
-                    if (dnav?.player?.IsDestroyed == false)
-                    {
-                        UnityEngine.Object.Destroy(dnav.player.gameObject);
-                    }
+                    DoLog($"--Respawning {d.Key}");
+                    drone?.Kill();
                     UnityEngine.Object.Destroy(drone.gameObject);
                     drones.Remove(d.Key);
-                    if (d.Key == configData.Drones["monument"].name)
+                    SaveData();
+
+                    if (configData.Drones["monument"].name.Equals(d.Key))
                     {
                         SpawnMonumentDrone();
                     }
-                    else if (d.Key == configData.Drones["ring"].name)
+                    else if (configData.Drones["ring"].name.Equals(d.Key))
                     {
                         SpawnRingDrone();
                     }
-                    else if (d.Key == configData.Drones["road"].name)
+                    else if (configData.Drones["road"].name.Equals(d.Key))
                     {
                         SpawnRoadDrone();
                     }
@@ -313,7 +330,7 @@ namespace Oxide.Plugins
                 RemoveDroneFromCS(oldName);
                 UnityEngine.Object.Destroy(dnav.gameObject);
 
-                foreach (KeyValuePair<string, BaseEntity> item in drones.Where(kvp => kvp.Value == drone).ToList())
+                foreach (KeyValuePair<string, uint> item in drones.Where(kvp => kvp.Value == drone.net.ID.Value).ToList())
                 {
                     drones.Remove(item.Key);
                 }
@@ -346,18 +363,32 @@ namespace Oxide.Plugins
             if (!iplayer.IsAdmin) return;
 
             string message = "Drone Status:\n";
-            foreach(KeyValuePair<string, DroneInfo> drone in configData.Drones)
+            if (args.Length > 0)
+            {
+                string realName = args[0];
+                Drone realDrone = RemoteControlEntity.FindByID(realName) as Drone;
+                if (realDrone != null)
+                {
+                    string[] gc = (string[])GridAPI.CallHook("GetGrid", realDrone.transform.position);
+                    string curr = realDrone.transform.position.ToString() + "(" + string.Concat(gc) + ")";
+                    message += $"{realName} ({realDrone.net.ID}):\n\tspawned: {realDrone.isSpawned}\n\tbroken: {realDrone.IsBroken()}"
+                        + $"\n\tactive: {realDrone.isActiveAndEnabled}\n\tlocation: {curr}\n";
+                    Message(iplayer, message);
+                }
+                return;
+            }
+            foreach (KeyValuePair<string, DroneInfo> drone in configData.Drones)
             {
                 string realName = "";
-                foreach (KeyValuePair<string, BaseEntity> d in drones)
+                foreach (KeyValuePair<string, uint> d in drones)
                 {
                     if (d.Key.StartsWith(drone.Value.name))
                     {
                         realName = d.Key;
                     }
                 }
-                if (realName == "") continue;
-                BaseEntity realDrone = drones[realName];
+                if (realName?.Length == 0) continue;
+                BaseEntity realDrone = BaseNetworkable.serverEntities.Find(new NetworkableId(drones[realName])) as BaseEntity;
                 if (realDrone == null) continue;
 
                 string[] gc = (string[])GridAPI.CallHook("GetGrid", realDrone.transform.position);
@@ -402,6 +433,7 @@ namespace Oxide.Plugins
             if (args[0] != null) droneName = args[0];
 
             BasePlayer player = iplayer.Object as BasePlayer;
+            if (player == null) return;
 
             if (configData.Options.useEconomics || configData.Options.useServerRewards)
             {
@@ -530,9 +562,10 @@ namespace Oxide.Plugins
             }
             if (args.Length > 0)
             {
+                BaseEntity dr = BaseNetworkable.serverEntities.Find(new NetworkableId(drones[configData.Drones["monument"].name])) as BaseEntity;
                 if (args[0] == "kill")
                 {
-                    DroneNav nav = drones[configData.Drones["monument"].name].GetComponent<DroneNav>();
+                    DroneNav nav = dr.GetComponent<DroneNav>();
                     if (nav != null)
                     {
                         UnityEngine.Object.Destroy(nav.gameObject);
@@ -540,7 +573,7 @@ namespace Oxide.Plugins
                 }
                 else if (args[0] == "status")
                 {
-                    DroneNav nav = drones[configData.Drones["monument"].name].GetComponent<DroneNav>();
+                    DroneNav nav = dr.GetComponent<DroneNav>();
                     if (nav != null)
                     {
                         string curr;
@@ -572,7 +605,7 @@ namespace Oxide.Plugins
                 string nextMon = string.Join(" ", args);
                 if (monPos.ContainsKey(nextMon))
                 {
-                    DroneNav nav = drones[configData.Drones["monument"].name].GetComponent<DroneNav>();
+                    DroneNav nav = dr.GetComponent<DroneNav>();
                     if (nav != null)
                     {
                         nav.currentMonument = nextMon;
@@ -605,9 +638,10 @@ namespace Oxide.Plugins
             }
             if (args.Length > 0)
             {
+                BaseEntity dr = BaseNetworkable.serverEntities.Find(new NetworkableId(drones[configData.Drones["road"].name])) as BaseEntity;
                 if (args[0] == "kill")
                 {
-                    DroneNav nav = drones[configData.Drones["road"].name].GetComponent<DroneNav>();
+                    DroneNav nav = dr.GetComponent<DroneNav>();
                     if (nav != null)
                     {
                         UnityEngine.Object.Destroy(nav.drone.gameObject);
@@ -615,7 +649,7 @@ namespace Oxide.Plugins
                 }
                 else if (args[0] == "status")
                 {
-                    DroneNav nav = drones[configData.Drones["road"].name].GetComponent<DroneNav>();
+                    DroneNav nav = dr.GetComponent<DroneNav>();
                     if (nav != null)
                     {
                         string curr = nav.current.ToString();
@@ -642,7 +676,7 @@ namespace Oxide.Plugins
                 }
                 if (roads.ContainsKey(args[0]))
                 {
-                    DroneNav nav = drones["road"].GetComponent<DroneNav>();
+                    DroneNav nav = dr.GetComponent<DroneNav>();
                     if (nav != null)
                     {
                         nav.currentRoad = roads[args[0]];
@@ -675,9 +709,10 @@ namespace Oxide.Plugins
             }
             if (args.Length > 0)
             {
+                BaseEntity dr = BaseNetworkable.serverEntities.Find(new NetworkableId(drones[configData.Drones["road"].name])) as BaseEntity;
                 if (args[0] == "kill")
                 {
-                    DroneNav nav = drones[configData.Drones["ring"].name].GetComponent<DroneNav>();
+                    DroneNav nav = dr.GetComponent<DroneNav>();
                     if (nav != null)
                     {
                         UnityEngine.Object.Destroy(nav.drone.gameObject);
@@ -685,7 +720,7 @@ namespace Oxide.Plugins
                 }
                 else if (args[0] == "status")
                 {
-                    DroneNav nav = drones[configData.Drones["ring"].name].GetComponent<DroneNav>();
+                    DroneNav nav = dr.GetComponent<DroneNav>();
                     if (nav != null)
                     {
                         string curr;
@@ -960,6 +995,22 @@ namespace Oxide.Plugins
             public bool SetMaxControlRange;
             public float maxControlRange;
         }
+
+        private void SaveData()
+        {
+            // Save the data file as we add/remove minicopters.
+            Interface.Oxide.DataFileSystem.WriteObject(Name, drones);
+        }
+
+        private void LoadData()
+        {
+            drones = Interface.Oxide.DataFileSystem.ReadObject<Dictionary<string, uint>>(Name);
+            if (drones == null)
+            {
+                drones = new Dictionary<string, uint>();
+                SaveData();
+            }
+        }
         #endregion
 
 		#region classes
@@ -1043,7 +1094,7 @@ namespace Oxide.Plugins
 
             private void Start()
             {
-                droneid = drone.net.ID;
+                droneid = (uint)drone.net.ID.Value;
             }
 
             public void SetPlayerTarget(BasePlayer pl)
@@ -1215,7 +1266,6 @@ namespace Oxide.Plugins
                 target.z = currentRoad.points[whichPoint].z;
 
                 direction = (target - current).normalized;
-                Quaternion lookrotation = Quaternion.LookRotation(direction);
 
                 //Instance.DoLog($"{rc.rcIdentifier} trying to move to target point {whichPoint.ToString()} {target.ToString()}, currently at {current.ToString()}");
                 if (Vector3.Distance(current, target) < 2)
@@ -1242,7 +1292,8 @@ namespace Oxide.Plugins
                     Instance.DoLog($"{drone.rcIdentifier} changed target point to {whichPoint}");
                 }
 
-                drone.transform.LookAt(target);
+                //drone.transform.LookAt(target);
+                SmoothRot();
                 DoMoveDrone();
             }
 
@@ -1254,8 +1305,7 @@ namespace Oxide.Plugins
                 current = drone.transform.position;
                 target = new Vector3(Instance.monPos[currentMonument].x, GetHeight(Instance.monPos[currentMonument]), Instance.monPos[currentMonument].z);
 
-                direction = (target - current).normalized;
-                Quaternion lookrotation = Quaternion.LookRotation(direction);
+                direction = target - current;
 
                 float monsize = Mathf.Max(25, currentMonSize);
                 if (Vector3.Distance(current, target) < monsize)
@@ -1265,8 +1315,16 @@ namespace Oxide.Plugins
                     target = Instance.monPos[currentMonument];
                     target.y = GetHeight(target);
                 }
-                drone.transform.LookAt(target);
+                SmoothRot();
                 DoMoveDrone();
+            }
+
+            public void SmoothRot()
+            {
+                //Instance.Puts($"Smooth rotation for {drone.rcIdentifier}");
+                //drone.transform.LookAt(target);
+                Quaternion toRotation = Quaternion.LookRotation(direction);
+                drone.transform.rotation = Quaternion.Slerp(drone.transform.rotation, toRotation, 3.5f * Time.time);
             }
 
             public void Stabilize()
@@ -1737,7 +1795,9 @@ namespace Oxide.Plugins
             drone.SetHealth(1000);
             drone.Spawn();
 
-            drones.Add(newName, drone);
+            if (drones.ContainsKey(newName)) drones.Remove(newName);
+            drones.Add(newName, (uint)drone.net.ID.Value);
+            SaveData();
             if (!string.IsNullOrEmpty(newName)) SetDroneInCS(newName);
         }
 
@@ -1745,6 +1805,7 @@ namespace Oxide.Plugins
         {
             if (!configData.Drones["ring"].spawn) return;
             drones.Remove(configData.Drones["ring"].name);
+            SaveData();
             if (configData.Drones["ring"].start == null) configData.Drones["ring"].start = "Road 0";
 
             if (!roads.ContainsKey(configData.Drones["ring"].start))
@@ -1769,7 +1830,9 @@ namespace Oxide.Plugins
             drone.SetHealth(1000);
             drone.Spawn();
 
-            drones.Add(newName, drone);
+            if (drones.ContainsKey(newName)) drones.Remove(newName);
+            drones.Add(newName, (uint)drone.net.ID.Value);
+            SaveData();
             if (!string.IsNullOrEmpty(newName)) SetDroneInCS(newName);
         }
 
@@ -1777,6 +1840,7 @@ namespace Oxide.Plugins
         {
             if (!configData.Drones["monument"].spawn) return;
             drones.Remove(configData.Drones["monument"].name);
+            SaveData();
 
             Vector3 target = Vector3.zero;
             target.y = TerrainMeta.HeightMap.GetHeight(target) + configData.Options.minHeight;
@@ -1790,7 +1854,9 @@ namespace Oxide.Plugins
             drone.SetHealth(1000);
             drone.Spawn();
 
-            drones.Add(newName, drone);
+            if (drones.ContainsKey(newName)) drones.Remove(newName);
+            drones.Add(newName, (uint)drone.net.ID.Value);
+            SaveData();
             if (!string.IsNullOrEmpty(newName)) SetDroneInCS(newName);
         }
 
@@ -1816,7 +1882,7 @@ namespace Oxide.Plugins
             {
                 if (!station.controlBookmarks.Contains(drone))
                 {
-                    DoLog($"Adding drone {drone}:{drones[drone].net.ID} to CS {station.net.ID}");
+                    DoLog($"Adding drone {drone}:{drones[drone]} to CS {station.net.ID}");
                     station.controlBookmarks.Add(drone);
                     station.SendNetworkUpdate(BasePlayer.NetworkQueue.Update);
                 }
@@ -1925,14 +1991,10 @@ namespace Oxide.Plugins
             }
             if (configData.Options.useTeams)
             {
-                BasePlayer player = BasePlayer.FindByID(playerid);
-                if (player != null && player.currentTeam != 0)
+                RelationshipManager.PlayerTeam playerTeam = RelationshipManager.ServerInstance.FindPlayersTeam(playerid);
+                if (playerTeam?.members.Contains(ownerid) == true)
                 {
-                    RelationshipManager.PlayerTeam playerTeam = RelationshipManager.ServerInstance.FindTeam(player.currentTeam);
-                    if (playerTeam?.members.Contains(ownerid) == true)
-                    {
-                        return true;
-                    }
+                    return true;
                 }
             }
             return false;
