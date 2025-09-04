@@ -18,22 +18,22 @@
     Optionally you can also view the license at <http://www.gnu.org/licenses/>.
 */
 #endregion
-using System.Collections.Generic;
-using UnityEngine;
-using Oxide.Core;
-using Oxide.Core.Plugins;
 using Newtonsoft.Json;
+using Oxide.Core;
 using Oxide.Core.Libraries.Covalence;
-using System.Text.RegularExpressions;
-using System.Linq;
+using Oxide.Core.Plugins;
 using Oxide.Game.Rust.Cui;
-using System.Globalization;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
+using System.Linq;
+using System.Text.RegularExpressions;
+using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("DronePatrol", "RFC1920", "1.0.23")]
+    [Info("DronePatrol", "RFC1920", "1.0.24")]
     [Description("Create server drones that fly and roam, and allow users to spawn a drone of their own.")]
     internal class DronePatrol : RustPlugin
     {
@@ -42,11 +42,11 @@ namespace Oxide.Plugins
         private readonly Plugin RoadFinder, Friends, Clans, Chute, GridAPI, Economics, ServerRewards, BankSystem;
 
         public GameObject obj;
-        public Dictionary<string, Road> roads = new Dictionary<string, Road>();
-        public List<string> monNames = new List<string>();
-        public SortedDictionary<string, Vector3> monPos  = new SortedDictionary<string, Vector3>();
-        public SortedDictionary<string, Vector3> monSize = new SortedDictionary<string, Vector3>();
-        private Dictionary<ulong, DroneNav> pguis = new Dictionary<ulong, DroneNav>();
+        public Dictionary<string, Road> roads = new();
+        public List<string> monNames = new();
+        public SortedDictionary<string, Vector3> monPos = new();
+        public SortedDictionary<string, Vector3> monSize = new();
+        private Dictionary<ulong, DroneNav> pguis = new();
 
         public static Timer checkTimer;
         public static string droneprefab = "assets/prefabs/deployable/drone/drone.deployed.prefab";
@@ -54,15 +54,15 @@ namespace Oxide.Plugins
 
         public static DronePatrol Instance;
         private const string permDriver = "dronepatrol.use";
-        private const string permAdmin  = "dronepatrol.admin";
+        private const string permAdmin = "dronepatrol.admin";
         private const string DRONEGUI = "dronepatrol.hud";
 
-        public static Dictionary<string, uint> drones = new Dictionary<string, uint>();
+        public static Dictionary<string, uint> drones = new();
         public static bool initdone;
 
         public class Road
         {
-            public List<Vector3> points = new List<Vector3>();
+            public List<Vector3> points = new();
             public float width;
             public float offset;
             public int topo;
@@ -108,11 +108,11 @@ namespace Oxide.Plugins
             FindMonuments();
             CheckDrones(true);
 
-            object x = RoadFinder?.CallHook("GetRoads");
-            if (x != null)
+            object roads = RoadFinder?.CallHook("GetRoads");
+            if (roads != null)
             {
-                string json = JsonConvert.SerializeObject(x);
-                roads = JsonConvert.DeserializeObject<Dictionary<string, Road>>(json);
+                string json = JsonConvert.SerializeObject(roads);
+                this.roads = JsonConvert.DeserializeObject<Dictionary<string, Road>>(json);
                 NextTick(() =>
                 {
                     SpawnRingDrone();
@@ -765,7 +765,7 @@ namespace Oxide.Plugins
                 Drone drone = station.currentlyControllingEnt.Get(true).GetComponent<Drone>();
                 if (drone != null)
                 {
-                    Vector3 newPos = new Vector3(drone.transform.position.x, drone.transform.position.y + 10f, drone.transform.position.z);
+                    Vector3 newPos = new(drone.transform.position.x, drone.transform.position.y + 10f, drone.transform.position.z);
                     station.StopControl(player);
                     station.DismountPlayer(player, true);
                     station.SendNetworkUpdateImmediate();
@@ -790,9 +790,9 @@ namespace Oxide.Plugins
             player.EnsureDismounted();
             player.Teleport(position);
             player.UpdateNetworkGroup();
-            player.SendNetworkUpdateImmediate(false);
+            player.SendNetworkUpdateImmediate();
 
-            if (player.net?.connection != null) player.ClientRPCPlayer(null, player, "StartLoading");
+            if (player.net?.connection != null) player.ClientRPC(RpcTarget.Player("StartLoading", player));
         }
 
         private object OnBookmarkAdd(ComputerStation computerStation, BasePlayer player, string bookmarkName)
@@ -911,7 +911,7 @@ namespace Oxide.Plugins
         protected override void LoadDefaultConfig()
         {
             Puts("Creating new config file.");
-            ConfigData config = new ConfigData
+            ConfigData config = new()
             {
                 Options = new Options()
                 {
@@ -970,7 +970,7 @@ namespace Oxide.Plugins
 
         public class ConfigData
         {
-            public Options Options = new Options();
+            public Options Options = new();
             public Dictionary<string, DroneInfo> Drones;
             public VersionNumber Version;
         }
@@ -999,12 +999,12 @@ namespace Oxide.Plugins
         private void SaveData()
         {
             // Save the data file as we add/remove minicopters.
-            Interface.Oxide.DataFileSystem.WriteObject(Name, drones);
+            Interface.GetMod().DataFileSystem.WriteObject(Name, drones);
         }
 
         private void LoadData()
         {
-            drones = Interface.Oxide.DataFileSystem.ReadObject<Dictionary<string, uint>>(Name);
+            drones = Interface.GetMod().DataFileSystem.ReadObject<Dictionary<string, uint>>(Name);
             if (drones == null)
             {
                 drones = new Dictionary<string, uint>();
@@ -1013,7 +1013,7 @@ namespace Oxide.Plugins
         }
         #endregion
 
-		#region classes
+        #region classes
         internal class DroneInfo
         {
             public string name;
@@ -1058,7 +1058,7 @@ namespace Oxide.Plugins
             public Vector3 direction;
             public Vector3 target = Vector3.zero;
             public Vector3 last = Vector3.zero;
-            public GameObject slop = new GameObject();
+            public GameObject slop = new();
 
             public Stopwatch stuckTimer;
 
@@ -1153,7 +1153,7 @@ namespace Oxide.Plugins
                 // Cut down on the jerkiness - we don't need no stinkin points!
                 int cnt = currentRoad.points.Count;
                 Instance.DoLog($"{drone.rcIdentifier} road points {cnt}");
-                List<Vector3> newpts = new List<Vector3>();
+                List<Vector3> newpts = new();
 
                 int skip;
                 if (cnt > 500) skip = 8;
@@ -1354,7 +1354,7 @@ namespace Oxide.Plugins
                 int x = 0;
                 int z = 0;
 
-                InputMessage message = new InputMessage() { buttons = 0 };
+                InputMessage message = new() { buttons = 0 };
 
                 bool toolow = TooLow(current);
                 bool above = DangerAbove(current);
@@ -1422,7 +1422,7 @@ namespace Oxide.Plugins
                 message.mouseDelta.x = x;
                 message.mouseDelta.z = z;
 
-                InputState input = new InputState() { current = message };
+                InputState input = new() { current = message };
                 drone.UserInput(input, new CameraViewerId(controllingUserId, 0));
                 last = drone.transform.position;
             }
@@ -1446,8 +1446,8 @@ namespace Oxide.Plugins
                 // Pick a random road if road is null
                 int cnt = Instance.roads.Count;
 
-                System.Random rand = new System.Random();
-                List<string> roadlist = new List<string>(Instance.roads.Keys);
+                System.Random rand = new();
+                List<string> roadlist = new(Instance.roads.Keys);
                 string croad = roadlist[rand.Next(cnt)];
                 currentRoad = Instance.roads[croad];
 
@@ -1460,9 +1460,9 @@ namespace Oxide.Plugins
             {
                 // Pick a random monument if currentMonument is null
                 int cnt = Instance.monNames.Count;
-                List<string> monlist = new List<string>(Instance.monSize.Keys);
+                List<string> monlist = new(Instance.monSize.Keys);
 
-                System.Random rand = new System.Random();
+                System.Random rand = new();
                 int index = rand.Next(cnt);
                 string cmon = monlist[index];
                 currentMonument = Instance.monNames[index];
@@ -1759,8 +1759,8 @@ namespace Oxide.Plugins
             // Pick a random road if road is null
             int cnt = Instance.roads.Count;
 
-            System.Random rand = new System.Random();
-            List<string> roadlist = new List<string>(Instance.roads.Keys);
+            System.Random rand = new();
+            List<string> roadlist = new(Instance.roads.Keys);
             return roadlist[rand.Next(cnt)];
         }
 
@@ -1891,17 +1891,14 @@ namespace Oxide.Plugins
 
         private void FindMonuments()
         {
-            Vector3 extents = Vector3.zero;
-            float realWidth = 0f;
-            string name = null;
-            bool ishapis =  ConVar.Server.level.Contains("Hapis");
+            bool ishapis = ConVar.Server.level.Contains("Hapis");
 
             foreach (MonumentInfo monument in UnityEngine.Object.FindObjectsOfType<MonumentInfo>())
             {
                 if (monument.name.Contains("power_sub")) continue;// || monument.name.Contains("cave")) continue;
                 if (monument.name.Contains("derwater")) continue;
-                realWidth = 0f;
-                name = null;
+                float realWidth = 0f;
+                string name = string.Empty;
 
                 if (monument.name == "OilrigAI")
                 {
@@ -1910,6 +1907,11 @@ namespace Oxide.Plugins
                 else if (monument.name == "OilrigAI2")
                 {
                     name = "Large Oilrig";
+                }
+                else if (monument.name == "assets/bundled/prefabs/autospawn/monument/medium/radtown_small_3.prefab")
+                {
+                    name = "Sewer Branch";
+                    realWidth = 100;
                 }
                 else
                 {
@@ -1930,7 +1932,7 @@ namespace Oxide.Plugins
                 }
                 if (monPos.ContainsKey(name)) continue;
 
-                extents = monument.Bounds.extents;
+                Vector3 extents = monument.Bounds.extents;
 
                 if (realWidth > 0f)
                 {
@@ -1967,7 +1969,7 @@ namespace Oxide.Plugins
         private void DoLog(string message, bool ismovement = false)
         {
             if (ismovement && !configData.Options.debugMovement) return;
-            if (configData.Options.debugMovement || configData.Options.debug) Interface.Oxide.LogInfo(message);
+            if (configData.Options.debugMovement || configData.Options.debug) Interface.GetMod().LogInfo(message);
         }
 
         private bool IsFriend(ulong playerid, ulong ownerid)
