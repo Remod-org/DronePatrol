@@ -33,7 +33,9 @@ Should any of the drones be destroyed along the way, they should respawn within 
     - /md status -- Show current status/position
     - /rd -- Spawn a road drone (normally would respawn on its own).  Requires RoadFinder plugin.
     - /rd status -- Show current status/position
-    - /fd PLAYERNAME -- Spawns a drone to follow a named player.  The drone will be named SPY{PLAYERNAME} <- Note that drone/CCTV names cannot contain special characters.  So, a drone set to follow me would be SPYRFC1920, for example.
+    - /fd PLAYERNAME -- Spawns a drone to follow a named player.  The drone will be named:
+        SPY{PLAYERNAME} <- Note that drone/CCTV names cannot contain
+    special characters.  So, a drone set to follow me would be SPYRFC1920, for example.
     - /fd DRONENAME kill -- Attempt to kill that drone
     - /ringd status -- Show current status/position
 
@@ -87,21 +89,27 @@ Should any of the drones be destroyed along the way, they should respawn within 
 ```
 
     - minHeight -- Minimum ground height for flight - other checks are done to try to avoid obstacles, but this is the big one.
-    - ActivationCode -- The default configuration above sets the value 2112 for the keystroke to jump out and spawn a chute (Ctrl-RightClick).
-    - setServerDroneInAllCS -- If true, whenever server drones are spawned by the plugin, they will be added/updated in all player computer stations.
+    - ActivationCode -- The default configuration above sets the value 2112 for the keystroke to jump out and spawn a
+    chute (Ctrl-RightClick).
+    - setServerDroneInAllCS -- If true, whenever server drones are spawned by the plugin, they will be added/updated in all player
+    computer stations.
     - setPlayerDroneInCS -- If true will add a player-spawned drone to their owned computer stations (see the next config)
     - useFriends/useClans/useTeams -- Will add player drones to computer stations owned by the spawning players friends.
     - useEconomics/useServerRewards -- Use either of these plugins to charge for user drone spawns based on droneCost
     - droneCost -- Cost for spawning a drone, if set.  Requires either or both of the above configs.
     - Drones
-        The above sections are currently limited to what you see (monument/ring/road).  In other words, adding more will not guarantee spawning those additional drones (one day)
+        The above sections are currently limited to what you see (monument/ring/road).  In other words, adding more will not
+        guarantee spawning those additional drones (one day)
         Please leave these in the config for now otherwise there will likely be errors.  Enable/disable as desired instead.
             name - Name of the spawned drone of each type
             spawn - true/false - whether to spawn or not
             start - Starting monument or road name.  Road names in Rust are, e.g. "Road 11", etc.
-        If you set the monument start to null (no quotes), the plugin will choose one for you.  Once it gets there it will select another one to fly to.
-        If you set the road drone start to null (no quotes), the plugin will choose one for you.  It will then travel from the road start point to end point and back (does not follow the road path)
-        If you set the ring drone start to something other than "Road 0", e.g. null, it should correct that as it's intended use is to fly around the map in a semi-circle following the ring road (if present).
+        If you set the monument start to null (no quotes), the plugin will choose one for you.  Once it gets there it will
+        select another one to fly to.
+        If you set the road drone start to null (no quotes), the plugin will choose one for you.  It will then travel from
+        the road start point to end point and back (does not follow the road path)
+        If you set the ring drone start to something other than "Road 0", e.g. null, it should correct that as it's intended
+        use is to fly around the map in a semi-circle following the ring road (if present).
 
 ## TODO
 
