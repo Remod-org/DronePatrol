@@ -41,8 +41,8 @@ Should any of the drones be destroyed along the way, they should respawn within 
 
 ## Permissions
 
-    dronepatrol.use --  Required to spawn a player drone via /drone
-    dronepatrol.admin -- Required to spawn monument or road drones via /md and /rd
+    - dronepatrol.use --  Required to spawn a player drone via /drone
+    - dronepatrol.admin -- Required to spawn monument or road drones via /md and /rd
 
 ## Configuration
 ```json
