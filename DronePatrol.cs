@@ -33,7 +33,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("DronePatrol", "RFC1920", "1.0.24")]
+    [Info("DronePatrol", "RFC1920", "1.0.25")]
     [Description("Create server drones that fly and roam, and allow users to spawn a drone of their own.")]
     internal class DronePatrol : RustPlugin
     {
@@ -99,6 +99,7 @@ namespace Oxide.Plugins
 
             foreach (ComputerStation station in UnityEngine.Object.FindObjectsOfType<ComputerStation>())
             {
+                if (station == null) continue;
                 foreach (string drone in drones.Keys)
                 {
                     if (station.controlBookmarks.Contains(drone)) station.controlBookmarks.Remove(drone);
@@ -180,15 +181,18 @@ namespace Oxide.Plugins
                     {
                         try
                         {
-                            DoLog($"Killing spawned drone {d.Key})");
+                            DoLog($"Killing spawned drone ({d.Key})");
                             drone?.Kill();
                             UnityEngine.Object.Destroy(drone?.gameObject);
                         }
                         catch { }
                         finally
                         {
-                            RemoveDroneFromCS(drone?.rcIdentifier);
-                            drones.Remove(drone?.rcIdentifier);
+                            if (drone != null)
+                            {
+                                RemoveDroneFromCS(drone?.rcIdentifier);
+                                drones.Remove(drone?.rcIdentifier);
+                            }
                         }
                     }
                 }
@@ -626,6 +630,19 @@ namespace Oxide.Plugins
             drone._maxHealth = 1000;
             drone.SetHealth(1000);
             drone.Spawn();
+
+            if (true)
+            {
+                var ds = drone.gameObject.GetComponent<StorageContainer>();
+                if (ds != null)
+                {
+                    Puts("Opening drone inventory");
+                    Item item = ItemManager.CreateByName("explosive.timed.item", 1);
+                    item.MoveToContainer(ds.inventory);
+                    ds.inventory.MarkDirty();
+                }
+            }
+
             Message(iplayer, "Spawned Monument drone");
         }
 
@@ -1862,6 +1879,7 @@ namespace Oxide.Plugins
 
         private void RemoveDroneFromCS(string drone)
         {
+            if (drone == null) return;
             if (!drones.ContainsKey(drone)) return;
             foreach (ComputerStation station in UnityEngine.Object.FindObjectsOfType<ComputerStation>())
             {
