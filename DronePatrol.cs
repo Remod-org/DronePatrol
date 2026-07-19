@@ -33,7 +33,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("DronePatrol", "RFC1920", "1.0.25")]
+    [Info("DronePatrol", "RFC1920", "1.0.26")]
     [Description("Create server drones that fly and roam, and allow users to spawn a drone of their own.")]
     internal class DronePatrol : RustPlugin
     {
@@ -97,7 +97,7 @@ namespace Oxide.Plugins
 
             LoadData();
 
-            foreach (ComputerStation station in UnityEngine.Object.FindObjectsOfType<ComputerStation>())
+            foreach (ComputerStation station in UnityEngine.Object.FindObjectsByType(typeof(ComputerStation), FindObjectsSortMode.None).Cast<ComputerStation>())
             {
                 if (station == null) continue;
                 foreach (string drone in drones.Keys)
@@ -152,17 +152,13 @@ namespace Oxide.Plugins
             if (startup)
             {
                 DoLog("Checking drones");
-                Drone[] allDrones = UnityEngine.Object.FindObjectsOfType<Drone>();
-                if (allDrones != null)
+                DoLog("Searching for drones with NONE as name");
+                foreach (Drone drone in UnityEngine.Object.FindObjectsByType(typeof(Drone), FindObjectsSortMode.None).Cast<Drone>())
                 {
-                    DoLog("Searching for drones with NONE as name");
-                    foreach (Drone drone in allDrones)
+                    if (drone?.rcIdentifier == "NONE" && !drone.IsDestroyed)
                     {
-                        if (drone?.rcIdentifier == "NONE" && !drone.IsDestroyed)
-                        {
-                            UnityEngine.Object.Destroy(drone.gameObject);
-                            RemoveDroneFromCS(drone?.rcIdentifier);
-                        }
+                        UnityEngine.Object.Destroy(drone.gameObject);
+                        RemoveDroneFromCS(drone?.rcIdentifier);
                     }
                 }
 
@@ -244,7 +240,7 @@ namespace Oxide.Plugins
             //{
             //    UnityEngine.Object.Destroy(d.gameObject);
             //}
-            foreach (DroneNav d in UnityEngine.Object.FindObjectsOfType<DroneNav>())
+            foreach (DroneNav d in UnityEngine.Object.FindObjectsByType(typeof(DroneNav), FindObjectsSortMode.None).Cast<DroneNav>())
             {
                 UnityEngine.Object.Destroy(d?.gameObject);
             }
@@ -279,10 +275,7 @@ namespace Oxide.Plugins
             if (!configData.Options.setPlayerDroneInCS) return;
             if (drone == null) return;
 
-            ComputerStation[] stations = UnityEngine.Object.FindObjectsOfType<ComputerStation>();
-            if (stations.Length == 0) return;
-
-            foreach (ComputerStation station in stations)
+            foreach (ComputerStation station in UnityEngine.Object.FindObjectsByType(typeof(ComputerStation), FindObjectsSortMode.None).Cast<ComputerStation>())
             {
                 if (station.OwnerID != drone.OwnerID && !IsFriend(station.OwnerID, drone.OwnerID)) continue;
 
@@ -420,7 +413,7 @@ namespace Oxide.Plugins
             {
                 if (args[1] == "kill")
                 {
-                    foreach (Drone d in UnityEngine.Object.FindObjectsOfType<Drone>())
+                    foreach (Drone d in UnityEngine.Object.FindObjectsByType(typeof(Drone), FindObjectsSortMode.None).Cast<Drone>())
                     {
                         if (d != null && d.rcIdentifier == args[0])
                         {
@@ -504,9 +497,7 @@ namespace Oxide.Plugins
                 }
                 else if (args[0] == "list")
                 {
-                    Drone[] dnav = UnityEngine.Object.FindObjectsOfType<Drone>();
-                    Dictionary<string, DroneInfo>.KeyCollection sdrones = configData.Drones.Keys;
-                    foreach (Drone d in dnav)
+                    foreach (Drone d in UnityEngine.Object.FindObjectsByType(typeof(Drone), FindObjectsSortMode.None).Cast<Drone>())
                     {
                         if (d?.rcIdentifier.Contains("SPY") == true)
                         {
@@ -1881,7 +1872,7 @@ namespace Oxide.Plugins
         {
             if (drone == null) return;
             if (!drones.ContainsKey(drone)) return;
-            foreach (ComputerStation station in UnityEngine.Object.FindObjectsOfType<ComputerStation>())
+            foreach (ComputerStation station in UnityEngine.Object.FindObjectsByType(typeof(ComputerStation), FindObjectsSortMode.None).Cast<ComputerStation>())
             {
                 if (station.controlBookmarks.Contains(drone))
                 {
@@ -1896,7 +1887,7 @@ namespace Oxide.Plugins
         {
             if (!configData.Options.setServerDroneInAllCS) return;
             if (!drones.ContainsKey(drone)) return;
-            foreach (ComputerStation station in UnityEngine.Object.FindObjectsOfType<ComputerStation>())
+            foreach (ComputerStation station in UnityEngine.Object.FindObjectsByType(typeof(ComputerStation), FindObjectsSortMode.None).Cast<ComputerStation>())
             {
                 if (!station.controlBookmarks.Contains(drone))
                 {
@@ -1911,7 +1902,7 @@ namespace Oxide.Plugins
         {
             bool ishapis = ConVar.Server.level.Contains("Hapis");
 
-            foreach (MonumentInfo monument in UnityEngine.Object.FindObjectsOfType<MonumentInfo>())
+            foreach (MonumentInfo monument in UnityEngine.Object.FindObjectsByType(typeof(MonumentInfo), FindObjectsSortMode.None).Cast<MonumentInfo>())
             {
                 if (monument.name.Contains("power_sub")) continue;// || monument.name.Contains("cave")) continue;
                 if (monument.name.Contains("derwater")) continue;
